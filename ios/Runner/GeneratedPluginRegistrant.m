@@ -6,10 +6,10 @@
 
 #import "GeneratedPluginRegistrant.h"
 
-#if __has_include(<file_picker/FilePickerPlugin.h>)
-#import <file_picker/FilePickerPlugin.h>
+#if __has_include(<file_picker_darwin/FilePickerPlugin.h>)
+#import <file_picker_darwin/FilePickerPlugin.h>
 #else
-@import file_picker;
+@import file_picker_darwin;
 #endif
 
 #if __has_include(<media_kit_libs_ios_video/MediaKitLibsIosVideoPlugin.h>)
@@ -30,22 +30,10 @@
 @import package_info_plus;
 #endif
 
-#if __has_include(<screen_brightness_ios/ScreenBrightnessIosPlugin.h>)
-#import <screen_brightness_ios/ScreenBrightnessIosPlugin.h>
-#else
-@import screen_brightness_ios;
-#endif
-
 #if __has_include(<share_plus/FPPSharePlusPlugin.h>)
 #import <share_plus/FPPSharePlusPlugin.h>
 #else
 @import share_plus;
-#endif
-
-#if __has_include(<volume_controller/VolumeControllerPlugin.h>)
-#import <volume_controller/VolumeControllerPlugin.h>
-#else
-@import volume_controller;
 #endif
 
 #if __has_include(<wakelock_plus/WakelockPlusPlugin.h>)
@@ -61,9 +49,7 @@
   [MediaKitLibsIosVideoPlugin registerWithRegistrar:[registry registrarForPlugin:@"MediaKitLibsIosVideoPlugin"]];
   [MediaKitVideoPlugin registerWithRegistrar:[registry registrarForPlugin:@"MediaKitVideoPlugin"]];
   [FPPPackageInfoPlusPlugin registerWithRegistrar:[registry registrarForPlugin:@"FPPPackageInfoPlusPlugin"]];
-  [ScreenBrightnessIosPlugin registerWithRegistrar:[registry registrarForPlugin:@"ScreenBrightnessIosPlugin"]];
   [FPPSharePlusPlugin registerWithRegistrar:[registry registrarForPlugin:@"FPPSharePlusPlugin"]];
-  [VolumeControllerPlugin registerWithRegistrar:[registry registrarForPlugin:@"VolumeControllerPlugin"]];
   [WakelockPlusPlugin registerWithRegistrar:[registry registrarForPlugin:@"WakelockPlusPlugin"]];
 }
 
