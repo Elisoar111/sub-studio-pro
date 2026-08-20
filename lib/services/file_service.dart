@@ -95,6 +95,13 @@ class FileService {
         title: '选择附件（字体/图片）',
       );
 
+  /// 选择 JSON 文件（术语表旁车导入）。
+  Future<List<PickedFile>> pickJsonFile() => _pick(
+        exts: const ['json'],
+        multi: false,
+        title: '选择术语表文件（.glossary.json）',
+      );
+
   Future<List<PickedFile>> _pick({
     required List<String> exts,
     required bool multi,

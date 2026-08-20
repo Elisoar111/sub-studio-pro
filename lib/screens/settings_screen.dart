@@ -54,6 +54,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   late final TextEditingController _aiModelCtrl = TextEditingController(
       text: SettingsProvider.instance.aiModel);
 
+  /// 润色模式自定义附加指令（v1.3，空 = 仅内置规则）
+  late final TextEditingController _polishRulesCtrl = TextEditingController(
+      text: SettingsProvider.instance.polishCustomRules);
+
   late final TextEditingController _mkvDirCtrl = TextEditingController(
       text: StorageService.instance.getSetting(StorageService.kMkvtoolnixDir));
 
@@ -559,19 +563,26 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 '可填 whisper.exe / python.exe 或其所在目录',
           ),
           const SizedBox(height: 8),
-          DropdownButtonFormField<WhisperBackend>(
-            initialValue: _whisperBackend,
-            decoration: const InputDecoration(
-              labelText: '转写后端',
-              border: OutlineInputBorder(),
-              isDense: true,
+          ValueListenableBuilder<bool>(
+            valueListenable: svc.cppAvailable,
+            builder: (context, cppOk, _) =>
+                DropdownButtonFormField<WhisperBackend>(
+              initialValue: _whisperBackend,
+              decoration: const InputDecoration(
+                labelText: '转写后端',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              items: [
+                for (final b in selectableWhisperBackends(
+                  cppAvailable: cppOk,
+                  selected: _whisperBackend,
+                ))
+                  DropdownMenuItem(value: b, child: Text(b.label)),
+              ],
+              onChanged: (v) =>
+                  setState(() => _whisperBackend = v ?? WhisperBackend.auto),
             ),
-            items: [
-              for (final b in WhisperBackend.values)
-                DropdownMenuItem(value: b, child: Text(b.label)),
-            ],
-            onChanged: (v) =>
-                setState(() => _whisperBackend = v ?? WhisperBackend.auto),
           ),
           const SizedBox(height: 8),
           _pathField(
@@ -591,9 +602,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             '基础后端 openai-whisper（Python）：pip install -U openai-whisper；'
             '提速可选 faster-whisper（CLI 兼容，CPU 转写约快 4 倍，'
             '支持 VAD 静音过滤）：pip install -U faster-whisper-ctranslate2。\n'
-            'whisper.cpp 评估结论（v1.2）：无 Python 依赖、分发友好，'
-            '但 CLI 参数面与 GUI 集成成本高，暂不集成，追求速度推荐 '
-            'faster-whisper。首次转写会自动下载所选模型，'
+            'whisper.cpp（v1.3 实验性）：检测到 whisper-cli.exe / main.exe 时'
+            '才会出现在后端下拉；模型需自行下载 ggml-*.bin 放入缓存目录，'
+            '预设与提示词参数不适用。首次转写会自动下载所选模型，'
             '也可在转写页「模型管理」预下载。',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: scheme.onSurfaceVariant,
@@ -927,6 +938,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ),
           const SizedBox(height: 10),
+          TextField(
+            controller: _polishRulesCtrl,
+            maxLines: 3,
+            decoration: const InputDecoration(
+              labelText: '润色模式自定义指令（可选）',
+              hintText: '如：保留口语语气词；人名不缩写',
+              prefixIcon: Icon(Icons.tune),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '开启「译文润色模式」时拼接到内置润色规则之后；留空 = 仅内置规则。',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+          ),
+          const SizedBox(height: 10),
           Text(
             '仅保存在本机（Hive）；翻译时字幕文本会发送到该 API 服务商。'
             '兼容 OpenAI / DeepSeek / 中转等 chat/completions 接口。',
@@ -944,6 +972,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   baseUrl: _aiUrlCtrl.text,
                   model: _aiModelCtrl.text,
                 );
+                await SettingsProvider.instance
+                    .setPolishCustomRules(_polishRulesCtrl.text);
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('AI 翻译配置已保存')),

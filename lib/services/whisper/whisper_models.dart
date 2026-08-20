@@ -77,10 +77,14 @@ class WhisperPreset {
 /// - [faster]：faster-whisper（`whisper-ctranslate2` 命令，CLI 兼容、
 ///   CPU 下快约 4 倍，安装：`pip install -U faster-whisper-ctranslate2`）
 /// - [auto]：按 openai → faster 顺序自动探测
+/// - [whisperCpp]（v1.3 实验性）：whisper.cpp（`whisper-cli.exe` /
+///   旧版 `main.exe`），不参与 auto 自动链，仅在检测到可执行文件时
+///   出现在设置页下拉中，需用户显式选择
 enum WhisperBackend {
   auto('auto', '自动（优先 openai-whisper）'),
   openai('openai', 'openai-whisper'),
-  faster('faster', 'faster-whisper（ctranslate2）');
+  faster('faster', 'faster-whisper（ctranslate2）'),
+  whisperCpp('cpp', 'whisper.cpp（实验性）');
 
   const WhisperBackend(this.code, this.label);
 
@@ -88,9 +92,24 @@ enum WhisperBackend {
   final String code;
   final String label;
 
+  /// 实验性后端：默认不在 UI 枚举中显示，检测到可执行文件才出现。
+  bool get experimental => this == whisperCpp;
+
   static WhisperBackend fromCode(String? code) => values
       .firstWhere((b) => b.code == code, orElse: () => WhisperBackend.auto);
 }
+
+/// 设置页后端下拉可选项：实验性项仅在检测到可执行文件
+/// （[cppAvailable]）或其已是当前持久化选择时出现
+/// （后者避免下拉 value 不在 items 中的断言错误）。
+List<WhisperBackend> selectableWhisperBackends({
+  required bool cppAvailable,
+  WhisperBackend? selected,
+}) =>
+    [
+      for (final b in WhisperBackend.values)
+        if (!b.experimental || cppAvailable || b == selected) b,
+    ];
 
 /// 模型分组（3 组，全部为 openai-whisper 有效模型名）。
 const List<WhisperModelCategory> whisperModelCategories = [

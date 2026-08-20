@@ -33,6 +33,7 @@ class SettingsProvider extends ChangeNotifier {
   static const _kAiBaseUrl = 'ai_base_url';
   static const _kAiModel = 'ai_model';
   static const _kGlossary = 'ai_glossary';
+  static const _kPolishCustomRules = 'ai_polish_custom_rules';
 
   ThemeMode _themeMode = ThemeMode.system;
   Color _seedColor = AppTheme.defaultSeed;
@@ -51,6 +52,9 @@ class SettingsProvider extends ChangeNotifier {
   /// AI 翻译：术语表（人名/专名锁定）
   List<GlossaryTerm> _glossary = [];
 
+  /// AI 翻译：润色模式自定义附加指令（v1.3，空 = 仅内置规则）
+  String _polishCustomRules = '';
+
   ThemeMode get themeMode => _themeMode;
 
   /// 当前主题种子色
@@ -67,6 +71,8 @@ class SettingsProvider extends ChangeNotifier {
   String get aiModel => _aiModel;
 
   List<GlossaryTerm> get glossary => List.unmodifiable(_glossary);
+
+  String get polishCustomRules => _polishCustomRules;
 
   /// AI 翻译配置是否完整
   bool get aiReady =>
@@ -107,6 +113,8 @@ class SettingsProvider extends ChangeNotifier {
       fallback: 'https://api.openai.com',
     );
     _aiModel = StorageService.instance.getSetting(_kAiModel);
+    _polishCustomRules =
+        StorageService.instance.getSetting(_kPolishCustomRules);
     final glossaryRaw = StorageService.instance.getSetting(_kGlossary);
     if (glossaryRaw.isNotEmpty) {
       try {
@@ -184,6 +192,13 @@ class SettingsProvider extends ChangeNotifier {
       _kGlossary,
       jsonEncode([for (final t in _glossary) t.toJson()]),
     );
+  }
+
+  /// 保存润色模式自定义附加指令（空字符串 = 恢复内置规则）。
+  Future<void> setPolishCustomRules(String rules) async {
+    _polishCustomRules = rules;
+    notifyListeners();
+    await StorageService.instance.setSetting(_kPolishCustomRules, rules);
   }
 
   /// 刷新 FFmpeg 检测状态（设置页保存新路径后调用）。

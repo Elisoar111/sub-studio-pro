@@ -11,6 +11,7 @@ import '../models/queue_task.dart';
 import '../models/subtitle.dart';
 import '../models/task_params.dart';
 import '../providers/app_providers.dart';
+import 'ai/glossary_store.dart';
 import 'ai/translation_service.dart';
 import 'ffmpeg/ffmpeg_runner.dart';
 import 'ffmpeg/ffmpeg_service.dart';
@@ -408,7 +409,8 @@ class TaskRunner {
         doc,
         config: config,
         target: target,
-        glossary: settings.glossary,
+        // 全局词库 + 字幕目录旁车 .glossary.json（旁车同 source 优先）
+        glossary: GlossaryStore.mergedFor(input, settings.glossary),
         checkpointPath: TranslateCheckpoint.pathFor(output),
         checkpointMtimeMs: inputMtime,
         onProgress: (frac) {
@@ -422,6 +424,7 @@ class TaskRunner {
           translated,
           config: config,
           target: target,
+          customRules: settings.polishCustomRules,
           onProgress: (frac) {
             task.progress = 0.6 + frac * (endAt - 0.6);
             notify();

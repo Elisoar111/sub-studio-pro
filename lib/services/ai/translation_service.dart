@@ -117,16 +117,20 @@ String translateUserPayload(
 /// 润色 system prompt（二阶段调用，开关默认关闭）：
 /// 只修断句/标点/口语表达，不改语义；ASS 标签与 `\N` 原样保留；
 /// 行数一致、仅输出 JSON 数组（与翻译阶段同契约，便于复用解析）。
-String polishSystemPrompt(TranslateLanguage target) =>
-    'You are a professional subtitle proofreader. '
-    'Polish each numbered line, which is already translated into '
-    '${target.prompt}. Fix punctuation, segmentation and phrasing only; '
-    'do NOT change the meaning. '
-    'Rules: keep the ASS override tags like {\\i1} exactly as-is; '
-    'keep the literal backslash-N line breaks exactly; '
-    'do not add or remove lines; do not add quotes or numbering. '
-    'Reply with ONLY a JSON array of strings, same length and order '
-    'as the input.';
+/// [customRules]（v1.3）为用户自定义附加段，拼接到内置规则之后。
+String polishSystemPrompt(TranslateLanguage target, {String customRules = ''}) {
+  final base = 'You are a professional subtitle proofreader. '
+      'Polish each numbered line, which is already translated into '
+      '${target.prompt}. Fix punctuation, segmentation and phrasing only; '
+      'do NOT change the meaning. '
+      'Rules: keep the ASS override tags like {\\i1} exactly as-is; '
+      'keep the literal backslash-N line breaks exactly; '
+      'do not add or remove lines; do not add quotes or numbering. '
+      'Reply with ONLY a JSON array of strings, same length and order '
+      'as the input.';
+  final extra = customRules.trim();
+  return extra.isEmpty ? base : '$base Custom rules: $extra。';
+}
 
 /// 单批 chat 调用签名（[TranslationService.translateDocument] 的
 /// chatOverride 注入缝，测试用）。
@@ -367,6 +371,7 @@ class TranslationService {
     SubtitleDocument doc, {
     required AiApiConfig config,
     required TranslateLanguage target,
+    String customRules = '',
     void Function(double progress)? onProgress,
     bool Function()? shouldCancel,
     ChatFn? chatOverride,
@@ -377,7 +382,7 @@ class TranslationService {
     final cues = doc.cues;
     if (cues.isEmpty) return doc;
 
-    final system = polishSystemPrompt(target);
+    final system = polishSystemPrompt(target, customRules: customRules);
     final polished = <String>[];
     for (var i = 0; i < cues.length; i += batchSize) {
       if (shouldCancel?.call() ?? false) {

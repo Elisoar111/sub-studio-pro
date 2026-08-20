@@ -5,6 +5,7 @@ import '../core/constants.dart';
 import '../models/queue_task.dart';
 import '../models/task_params.dart';
 import '../providers/app_providers.dart';
+import '../services/ai/glossary_store.dart';
 import '../services/ai/translation_service.dart'
     show
         TranslateLanguage,
@@ -330,8 +331,25 @@ class _TranslateScreenState extends State<TranslateScreen> {
               children: [
                 const Text(
                   '锁定人名与专名的译法，解决前后不一致。译文留空 = 保留原文不译。'
-                  '随每批翻译注入提示词。',
+                  '随每批翻译注入提示词。翻译时自动合并字幕目录下的 '
+                  '.glossary.json 旁车（同词条旁车优先）。',
                   style: TextStyle(fontSize: 12),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: () => _importGlossary(setDState, terms),
+                      icon: const Icon(Icons.file_upload_outlined, size: 16),
+                      label: const Text('导入旁车'),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      onPressed: () => _exportGlossary(terms),
+                      icon: const Icon(Icons.file_download_outlined, size: 16),
+                      label: const Text('导出旁车'),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 8),
                 Flexible(
@@ -427,5 +445,53 @@ class _TranslateScreenState extends State<TranslateScreen> {
     );
     // 对话框内编辑未保存也要刷新按钮计数
     if (dirty && mounted) setState(() {});
+  }
+
+  /// 从旁车 JSON 文件导入词库：导入词条覆盖同 source 现有条目，
+  /// 超出 [kGlossaryMaxTerms] 时截断（用户仍可在保存前手动调整）。
+  Future<void> _importGlossary(
+      void Function(VoidCallback fn) setDState, List<GlossaryTerm> terms) async {
+    try {
+      final picked = await FileService.instance.pickJsonFile();
+      if (picked.isEmpty) return;
+      final imported = GlossaryStore.loadFile(picked.first.path ?? '');
+      if (imported.isEmpty) {
+        if (mounted) showErrorSnack(context, '未读取到有效词条');
+        return;
+      }
+      final bySource = {for (final t in terms) t.source: t};
+      for (final t in imported) {
+        bySource[t.source] = t;
+      }
+      final merged = bySource.values.take(kGlossaryMaxTerms).toList();
+      setDState(() {
+        terms
+          ..clear()
+          ..addAll(merged);
+      });
+    } catch (e) {
+      if (mounted) showErrorSnack(context, e);
+    }
+  }
+
+  /// 把当前对话框词条导出为目录旁车 `.glossary.json`（覆盖式）。
+  Future<void> _exportGlossary(List<GlossaryTerm> terms) async {
+    try {
+      final dir = await FileService.instance.pickDirectory();
+      if (dir == null || dir.isEmpty) return;
+      final cleaned = terms
+          .where((t) => t.source.trim().isNotEmpty)
+          .map((t) => GlossaryTerm(
+              source: t.source.trim(), translation: t.translation.trim()))
+          .toList();
+      await GlossaryStore.save(dir, cleaned);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已导出 ${cleaned.length} 条到 $dir')),
+        );
+      }
+    } catch (e) {
+      if (mounted) showErrorSnack(context, e);
+    }
   }
 }

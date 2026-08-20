@@ -152,6 +152,10 @@ class WhisperService {
   final ValueNotifier<WhisperLiveOutput?> liveOutput =
       ValueNotifier<WhisperLiveOutput?>(null);
 
+  /// whisper.cpp 实验性后端可执行检测（v1.3）：命中时设置页下拉
+  /// 才显示实验项；纯文件扫描，不启动子进程。
+  final ValueNotifier<bool> cppAvailable = ValueNotifier<bool>(false);
+
   bool get isAvailable => _available;
   String? get sourceLabel => _sourceLabel;
   String? get error => _error;
@@ -173,6 +177,7 @@ class WhisperService {
   Future<void> init() async {
     if (_checked) return;
     _checked = true;
+    _scanCppAvailability();
     if (await _restoreFromCache()) {
       _revalidateInBackground();
       return;
@@ -183,6 +188,20 @@ class WhisperService {
     } finally {
       detecting.value = false;
     }
+  }
+
+  /// whisper.cpp 可执行扫描（自定义路径 > PATH 目录；whisper-cli.exe
+  /// 全目录优先于 main.exe）。仅置位 [cppAvailable]，不验证可运行。
+  void _scanCppAvailability() {
+    final configured = StorageService.instance.getSetting(
+      StorageService.kWhisperPath,
+    );
+    final found = findCppExecutable(
+      (Platform.environment['PATH'] ?? '')
+          .split(Platform.isWindows ? ';' : ':'),
+      configured: configured,
+    );
+    cppAvailable.value = found != null;
   }
 
   /// 缓存条目 → 字段；未命中/过期返回 false。
@@ -283,10 +302,15 @@ class WhisperService {
       }
     }
     availability.value = false;
-    _error = '未检测到 Whisper（${pref.label}）。'
-        '请安装 openai-whisper（pip install -U openai-whisper）或 '
-        'faster-whisper（pip install -U faster-whisper-ctranslate2），'
-        '或在本页指定可执行文件路径。';
+    if (pref == WhisperBackend.whisperCpp) {
+      _error = '未检测到 whisper.cpp（实验性）：需要 whisper-cli.exe 或 '
+          '旧版 main.exe，可在官方 release 下载后在本页指定其路径。';
+    } else {
+      _error = '未检测到 Whisper（${pref.label}）。'
+          '请安装 openai-whisper（pip install -U openai-whisper）或 '
+          'faster-whisper（pip install -U faster-whisper-ctranslate2），'
+          '或在本页指定可执行文件路径。';
+    }
   }
 
   /// 探测成功后缓存结果（仅绝对路径可指纹；PATH 相对命令不缓存）。
@@ -312,6 +336,16 @@ class WhisperService {
   /// 探测单个后端：自定义路径优先，然后常见 conda/Python Scripts →
   /// PATH → python -m → py -m。
   Future<bool> _detectBackend(WhisperBackend backend, String configured) async {
+    if (backend == WhisperBackend.whisperCpp) {
+      final found = findCppExecutable(
+        (Platform.environment['PATH'] ?? '')
+            .split(Platform.isWindows ? ';' : ':'),
+        configured: configured,
+      );
+      return found != null &&
+          await _tryCommand(found, const [], 'whisper.cpp', backend);
+    }
+
     if (configured.isNotEmpty) {
       final spec = _resolveCustom(configured, backend);
       return spec != null &&
@@ -439,6 +473,7 @@ class WhisperService {
     availability.value = false;
     activeBackend.value = null;
     detecting.value = false;
+    cppAvailable.value = false;
   }
 
   // ───────────────────────── 模型缓存管理 ─────────────────────────
@@ -521,6 +556,14 @@ class WhisperService {
   }) async {
     if (!_available || _whisperCmd == null) {
       return TaskRunResult(success: false, error: _error ?? 'Whisper 不可用');
+    }
+    // whisper.cpp（实验性）：ggml 模型走官方脚本下载，不支持本机制
+    if (_activeBackend == WhisperBackend.whisperCpp) {
+      return const TaskRunResult(
+        success: false,
+        error: 'whisper.cpp（实验性）不支持自动下载模型：请用官方 '
+            'models/download-ggml-model.sh 下载 ggml-*.bin 放入模型缓存目录',
+      );
     }
     final cache = await cacheDir();
     final tmp = Directory.systemTemp;
@@ -723,6 +766,53 @@ class WhisperService {
 
   // ───────────────────────── 参数构建（纯函数，供测试） ─────────────────────────
 
+  /// whisper.cpp 可执行文件名（官方 release：whisper-cli.exe；
+  /// 旧版 examples 构建产物：main.exe）。
+  static const cppExeNames = ['whisper-cli.exe', 'main.exe'];
+
+  /// 在 [pathDirs]（PATH 目录列表）与自定义路径 [configured] 中查找
+  /// whisper.cpp 可执行文件；找不到返回 null。纯函数。
+  ///
+  /// 优先级：自定义路径 > PATH；同名竞争时 whisper-cli.exe（官方
+  /// 现行名）在任何目录都优先于 main.exe。自定义路径为 openai 的
+  /// whisper.exe 时拒绝（名字不属于 cpp 可执行）。
+  static String? findCppExecutable(List<String> pathDirs,
+      {String? configured}) {
+    final cfg = configured?.trim() ?? '';
+    if (cfg.isNotEmpty) {
+      if (Directory(cfg).existsSync()) {
+        for (final exe in cppExeNames) {
+          final f = p.join(cfg, exe);
+          if (File(f).existsSync()) return f;
+        }
+        return null;
+      }
+      return cppExeNames.contains(p.basename(cfg).toLowerCase())
+          ? cfg
+          : null;
+    }
+    for (final exe in cppExeNames) {
+      for (final dir in pathDirs) {
+        final clean = dir.trim();
+        if (clean.isEmpty) continue;
+        final f = p.join(clean, exe);
+        if (File(f).existsSync()) return f;
+      }
+    }
+    return null;
+  }
+
+  /// openai 模型名 → whisper.cpp ggml 模型文件名：
+  /// `base` → `ggml-base.bin`；已带 `ggml-` 前缀原样；裸 `.bin` 去重后补前缀。
+  static String cppModelName(String model) {
+    final name = model.trim();
+    if (name.startsWith('ggml-')) return name;
+    final bare = name.endsWith('.bin')
+        ? name.substring(0, name.length - '.bin'.length)
+        : name;
+    return 'ggml-$bare.bin';
+  }
+
   /// 构建 whisper CLI 参数（对齐 WhisperElectron buildArgs）。
   ///
   /// [backend] 差异化分支（v1.2）：faster + CPU 用 `--compute_type int8`
@@ -743,6 +833,25 @@ class WhisperService {
     WhisperBackend backend = WhisperBackend.openai,
     bool vadFilter = false,
   }) {
+    // whisper.cpp（v1.3 实验性）：参数面完全不同（-m/-f/-osrt/-of/-ng），
+    // 预设 / 初始提示词 / 自定义参数不适用；json/tsv/all 输出以 srt 兜底
+    if (backend == WhisperBackend.whisperCpp) {
+      final args = <String>[
+        '-m',
+        (cacheDir?.trim().isNotEmpty ?? false)
+            ? p.join(cacheDir!.trim(), cppModelName(model))
+            : cppModelName(model),
+        '-f', inputPath,
+      ];
+      final lang = normalizeLanguage(language, model);
+      if (lang != null) args.addAll(['-l', lang]);
+      if (!useGpu) args.add('-ng');
+      const fmtFlag = {'srt': '-osrt', 'vtt': '-ovtt', 'txt': '-otxt'};
+      args.add(fmtFlag[outputFormat] ?? '-osrt');
+      args.addAll(['-of', p.join(outputDir, p.basenameWithoutExtension(inputPath))]);
+      return args;
+    }
+
     final args = <String>[
       inputPath,
       '--model', model,
