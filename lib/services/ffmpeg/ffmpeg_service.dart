@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../core/constants.dart';
 import '../../core/utils/ffmpeg_path_escape.dart';
@@ -244,7 +245,8 @@ class FfmpegService {
   /// 烧录视频内嵌字幕轨：先提取到临时文件，再执行烧录。
   ///
   /// 预提取的临时 SRT 在任何退出路径（成功/失败/取消/异常）后都会删除，
-  /// 防止系统临时目录堆积 `embedded_track_<n>.srt`。
+  /// 防止系统临时目录堆积；文件名含 uuid（双开实例同时烧不同视频的
+  /// 同一轨道序号不会互删互写）。
   Future<TaskRunResult> burnEmbeddedTrack({
     required String videoPath,
     required int trackIndex,
@@ -259,7 +261,8 @@ class FfmpegService {
     CancelToken? cancelToken,
   }) async {
     final temp = await tempDir();
-    final tmpSub = p.join(temp, 'embedded_track_$trackIndex.srt');
+    final tmpSub =
+        p.join(temp, 'embedded_track_${trackIndex}_${const Uuid().v4()}.srt');
     try {
       final extract = await extractTrack(
         videoPath: videoPath,

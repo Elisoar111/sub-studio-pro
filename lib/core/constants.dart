@@ -20,7 +20,7 @@ class AppConstants {
   AppConstants._();
 
   static const String appName = 'Subtitle Studio Pro';
-  static const String appVersion = '2.1.0';
+  static const String appVersion = '2.1.1';
 
   /// 支持的视频扩展名（小写）
   static const List<String> videoExtensions = [

@@ -69,6 +69,25 @@ void main() {
     expect(tmpSub(0).existsSync(), isFalse,
         reason: '失败路径也不应遗留临时 SRT');
   });
+
+  // v2.1.1：双开实例临时文件互踩 —— 临时名必须唯一（uuid 后缀），
+  // 两个实例同时烧不同视频的同一轨道序号不会互删互写。
+  test('两次烧录同轨道序号使用不同的临时文件名', () async {
+    await svc.burnEmbeddedTrack(
+      videoPath: video.path,
+      trackIndex: 0,
+      outputPath: output.path,
+    );
+    await svc.burnEmbeddedTrack(
+      videoPath: video.path,
+      trackIndex: 0,
+      outputPath: output.path,
+    );
+
+    expect(runner.extractPaths, hasLength(2));
+    expect(runner.extractPaths[0], isNot(runner.extractPaths[1]),
+        reason: '同轨道序号连续两次烧录的临时文件名应不同');
+  });
 }
 
 class _FakePathProvider extends PathProviderPlatform {
@@ -85,6 +104,7 @@ class _FakePathProvider extends PathProviderPlatform {
 /// - 烧录（输出为调用方 outputPath）→ [failBurn] 控制成败
 class _FakeRunner implements FfmpegRunner {
   bool failBurn = false;
+  final List<String> extractPaths = [];
 
   @override
   Future<TaskRunResult> run(
@@ -98,6 +118,7 @@ class _FakeRunner implements FfmpegRunner {
     if (isExtract) {
       final out = request.arguments.firstWhere(
           (a) => a.contains('embedded_track_') && a.endsWith('.srt'));
+      extractPaths.add(out);
       File(out).writeAsStringSync('1\n00:00:01,000 --> 00:00:02,000\nhi\n');
       return const TaskRunResult(success: true);
     }

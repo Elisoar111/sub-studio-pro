@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import '../core/constants.dart';
+import '../core/utils/logger.dart';
 import '../models/queue_task.dart';
 import '../models/task_params.dart';
 import '../providers/app_providers.dart';
@@ -78,15 +79,21 @@ class WatchFolderService {
   // ─────────────────── 纯逻辑（可测） ───────────────────
 
   /// 从一组文件路径中找出「视频 + 同名字幕」配对。
-  /// 同名多字幕按 srt > ass > ssa > vtt > sub 取优先级最高者。
+  /// 同名多字幕按 srt > ass > ssa > vtt > sub 取优先级最高者；
+  /// 同名多视频（如 movie.mp4 + movie.mkv）语义不明，跳过不猜。
   static List<WatchPair> findPairs(List<String> files) {
     final videos = <String, String>{};
+    final ambiguous = <String>{};
     final subs = <String, List<MapEntry<String, int>>>{};
     for (final f in files) {
       final base = p.basenameWithoutExtension(f).toLowerCase();
       final ext = p.extension(f).toLowerCase().replaceFirst('.', '');
       if (AppConstants.videoExtensions.contains(ext)) {
-        videos[base] = f;
+        if (videos.containsKey(base)) {
+          ambiguous.add(base);
+        } else {
+          videos[base] = f;
+        }
       } else if (_kSubPriority.containsKey(ext)) {
         subs.putIfAbsent(base, () => []).add(MapEntry(f, _kSubPriority[ext]!));
       }
@@ -94,6 +101,11 @@ class WatchFolderService {
     final result = <WatchPair>[];
     final bases = videos.keys.toList()..sort();
     for (final b in bases) {
+      if (ambiguous.contains(b)) {
+        Logger.instance.log('监视文件夹：$b 存在同名多视频，跳过自动配对',
+            level: 'warn');
+        continue;
+      }
       final cand = subs[b];
       if (cand == null || cand.isEmpty) continue;
       cand.sort((a, c) => a.value.compareTo(c.value));

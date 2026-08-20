@@ -35,6 +35,28 @@ import 'whisper/whisper_service.dart';
 class TaskRunner {
   const TaskRunner();
 
+  /// 任务的产物文件路径（队列半成品清理用）。
+  ///
+  /// whisper 的 outputPath 语义是目录，实际产物由 [expectedOutputPath]
+  /// 推导；其余类型的 outputPath / mixedPath 均为文件路径。
+  static List<String> outputFilesOf(QueueTask task) {
+    final params = task.params;
+    final out = params[TaskParams.outputPath] ?? '';
+    if (out.isEmpty) return const [];
+    if (task.type == TaskType.whisper) {
+      return [
+        WhisperService.expectedOutputPath(
+          inputPath: params[TaskParams.videoPath] ?? '',
+          outputDir: out,
+          outputFormat: params[TaskParams.whisperFormat] ?? 'srt',
+          model: params[TaskParams.whisperModel] ?? 'small',
+        ),
+      ];
+    }
+    final mixed = params[TaskParams.mixedPath] ?? '';
+    return [out, if (mixed.isNotEmpty) mixed];
+  }
+
   /// 执行单个任务并返回结果；抛出的异常由调用方（队列）兜底。
   ///
   /// 不修改任务 status —— 终态判定（含取消归并）是队列的职责。

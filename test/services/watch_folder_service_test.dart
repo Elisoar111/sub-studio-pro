@@ -73,6 +73,18 @@ void main() {
       ]);
       expect(pairs, hasLength(2));
     });
+
+    // v2.1.1：同名不同扩展名视频（movie.mp4 + movie.mkv）语义不明，
+    // 自动烧录不应静默猜一个 —— 跳过该基名不配对。
+    test('同名多视频（基名冲突）跳过配对，不静默选择', () {
+      final pairs = WatchFolderService.findPairs([
+        r'D:\watch\movie.mp4',
+        r'D:\watch\movie.mkv',
+        r'D:\watch\movie.srt',
+      ]);
+      expect(pairs, isEmpty,
+          reason: '基名冲突时应跳过，避免烧错视频或依赖枚举顺序');
+    });
   });
 
   group('路径与滤镜决策（纯逻辑）', () {

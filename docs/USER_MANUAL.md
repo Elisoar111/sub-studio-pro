@@ -1,6 +1,6 @@
 # Subtitle Studio Pro 用户手册
 
-> 适用版本：v2.1.0 ｜ 平台：Windows 10 / 11
+> 适用版本：v2.1.1 ｜ 平台：Windows 10 / 11
 
 ## 目录
 

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
@@ -178,6 +180,13 @@ class QueueService extends ChangeNotifier {
     task.error = null;
     notifyListeners();
 
+    // 半成品清理快照：记录产物文件启动前的 mtime（null = 不存在）。
+    // 终态 cancelled/failed 时，mtime 被本任务更新过的文件即半成品。
+    final outFiles = TaskRunner.outputFilesOf(task);
+    final preMtimes = {
+      for (final f in outFiles) f: _mtimeOf(f),
+    };
+
     TaskRunResult? result;
     try {
       result = await _runner.run(
@@ -208,6 +217,12 @@ class QueueService extends ChangeNotifier {
     task.finishedAt = DateTime.now();
     _tokens.remove(task.id);
     notifyListeners();
+    // 半成品清理：取消/失败的任务若已写入（部分）产物文件则删除；
+    // 任务启动前就存在且未被触碰的旧文件保留。
+    if (task.status == TaskStatus.cancelled ||
+        task.status == TaskStatus.failed) {
+      _cleanupPartialOutputs(outFiles, preMtimes);
+    }
     // 被用户 removeTask / clearAll 主动移除的任务不再写历史
     if (_tasks.contains(task)) _historySaver?.call(task);
   }
@@ -282,6 +297,33 @@ class QueueService extends ChangeNotifier {
     _tokens.clear();
     _tasks.clear();
     notifyListeners();
+  }
+
+  static DateTime? _mtimeOf(String path) {
+    try {
+      final f = File(path);
+      return f.existsSync() ? f.lastModifiedSync() : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 删除本任务运行期间写入的产物文件（mtime 晚于启动前快照）。
+  /// 启动前就存在且未被触碰的文件不动；任何删除失败静默忽略。
+  static void _cleanupPartialOutputs(
+    List<String> files,
+    Map<String, DateTime?> preMtimes,
+  ) {
+    for (final path in files) {
+      try {
+        final f = File(path);
+        if (!f.existsSync()) continue;
+        final pre = preMtimes[path];
+        if (pre == null || f.lastModifiedSync().isAfter(pre)) {
+          f.deleteSync();
+        }
+      } catch (_) {}
+    }
   }
 }
 
