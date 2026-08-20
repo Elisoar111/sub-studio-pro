@@ -4,7 +4,7 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:charset/charset.dart';
-import 'package:flutter_big5/big5.dart';
+import 'big5/big5.dart';
 
 import '../../models/subtitle.dart';
 import 'subtitle_parser.dart';
@@ -203,7 +203,7 @@ class SubtitleConverter {
         }
       case 'big5':
         try {
-          bytes = Big5.encode(text);
+          bytes = Big5Codec.encode(text);
         } on ArgumentError catch (e) {
           throw SubtitleException('BIG5 编码失败：文本含 BIG5 无法表示的字符（$e）');
         }

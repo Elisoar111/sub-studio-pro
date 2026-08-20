@@ -45,10 +45,10 @@ packages:
     dependency: "direct main"
     description:
       name: charset
-      sha256: e8346cf597b6cea278d2d3a29b2d01ed8fb325aad718e70f22b0cb653cb31700
+      sha256: "27802032a581e01ac565904ece8c8962564b1070690794f0072f6865958ce8b9"
       url: "https://pub.dev"
     source: hosted
-    version: "1.2.0"
+    version: "2.0.1"
   clock:
     dependency: transitive
     description:
@@ -150,14 +150,6 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
-  flutter_big5:
-    dependency: "direct main"
-    description:
-      name: flutter_big5
-      sha256: e72e93d460d19777ee66b47918356bac687b825cffca0796489266f0d9edda4a
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.0.6"
   flutter_lints:
     dependency: "direct dev"
     description:

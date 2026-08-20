@@ -2,7 +2,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:charset/charset.dart';
-import 'package:flutter_big5/big5.dart';
+
+import 'big5/big5.dart';
 
 /// 解码结果：文本 + 判定编码名。
 class DecodedText {
@@ -68,8 +69,8 @@ class EncodingDetector {
     } catch (_) {}
     String? big5Text;
     try {
-      final t = Big5.decode(bytes);
-      // Big5.decode 永不抛异常；产出 U+FFFD 说明字节不是合法 BIG5
+      final t = Big5Codec.decode(bytes);
+      // Big5Codec.decode 永不抛异常；产出 U+FFFD 说明字节不是合法 BIG5
       if (!t.contains('\uFFFD') && _looksLikeText(t)) big5Text = t;
     } catch (_) {}
 
@@ -146,7 +147,7 @@ class EncodingDetector {
         return _decodeUtf16(bytes.sublist(0, len), littleEndian: true);
       case 'big5':
         try {
-          return Big5.decode(bytes);
+          return Big5Codec.decode(bytes);
         } catch (_) {
           return latin1.decode(bytes);
         }

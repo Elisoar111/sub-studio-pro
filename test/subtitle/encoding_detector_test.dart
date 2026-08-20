@@ -2,15 +2,15 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:charset/charset.dart';
-import 'package:flutter_big5/big5.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:subtitle_studio_pro/services/subtitle/big5/big5.dart';
 import 'package:subtitle_studio_pro/services/subtitle/encoding_detector.dart';
 
 void main() {
   group('编码检测', () {
     test('BIG5 繁体字幕应判定为 big5 而不是 gbk', () {
       const text = '這是繁體中文字幕測試檔案，請欣賞。今天的天氣很好。';
-      final bytes = Uint8List.fromList(Big5.encode(text));
+      final bytes = Uint8List.fromList(Big5Codec.encode(text));
       final r = EncodingDetector.decode(bytes);
       expect(r.encodingName, 'big5',
           reason: 'GBK 解码 BIG5 字节虽然不抛异常但产出大量错字，'

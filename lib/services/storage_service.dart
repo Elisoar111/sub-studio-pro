@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -81,6 +82,10 @@ class StorageService {
   /// Whisper 后端偏好（auto / openai / faster；空 = auto）
   static const String kWhisperBackend = 'whisper_backend';
 
+  /// Whisper 检测结果缓存（JSON：cmd/baseArgs/backend/label/指纹 + 设置快照；
+  /// 指纹 = 可执行文件 mtime:size，命中免跑 --help 探测）
+  static const String kWhisperDetection = 'whisper_detection_cache';
+
   KVStore? _history;
   KVStore? _settings;
   bool _ready = false;
@@ -117,6 +122,14 @@ class StorageService {
       Logger.instance.error('打开 Hive Box 失败: $name', e);
       return MemoryKVStore();
     }
+  }
+
+  /// 测试注入：不落盘，全部走内存存储。
+  @visibleForTesting
+  void useMemoryStoreForTesting() {
+    _history = MemoryKVStore();
+    _settings = MemoryKVStore();
+    _ready = true;
   }
 
   // ─────────────────────── 历史记录 ───────────────────────

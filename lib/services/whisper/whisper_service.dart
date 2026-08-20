@@ -161,16 +161,97 @@ class WhisperService {
 
   // ───────────────────────── 定位 / 检测 ─────────────────────────
 
+  /// `--help` 探测注入缝（widget/单测避免真实 torch 导入子进程）。
+  static Future<ProcessResult> Function(String cmd, List<String> args)?
+      probeOverride;
+
   /// 检测 Whisper（幂等）；设置页修改后调 [configure] 重检。
+  ///
+  /// 快路径：上次检测结果缓存命中（设置未变 + 可执行文件指纹一致）时
+  /// 直接恢复状态、零子进程（`--help` 触发 torch 导入需 10~30s），
+  /// 随后后台静默复检一次；复检失败清缓存并转不可用。
   Future<void> init() async {
     if (_checked) return;
     _checked = true;
+    if (await _restoreFromCache()) {
+      _revalidateInBackground();
+      return;
+    }
     detecting.value = true;
     try {
       await _detect();
     } finally {
       detecting.value = false;
     }
+  }
+
+  /// 缓存条目 → 字段；未命中/过期返回 false。
+  Future<bool> _restoreFromCache() async {
+    if (!Platform.isWindows) return false;
+    final raw = StorageService.instance
+        .getSetting(StorageService.kWhisperDetection);
+    if (raw.isEmpty) return false;
+    Map<String, dynamic> c;
+    try {
+      c = jsonDecode(raw) as Map<String, dynamic>;
+    } catch (_) {
+      return false;
+    }
+    // 设置快照比对：路径 / 后端偏好任一变更即过期
+    final pathCfg = StorageService.instance
+        .getSetting(StorageService.kWhisperPath);
+    final prefCfg = StorageService.instance
+        .getSetting(StorageService.kWhisperBackend);
+    if ((c['pathCfg'] as String? ?? '') != pathCfg) return false;
+    if ((c['prefCfg'] as String? ?? '') != prefCfg) return false;
+    final backend = WhisperBackend.fromCode(c['backend'] as String?);
+    if (backend == WhisperBackend.auto) return false; // 只缓存真实后端
+    final cmd = c['cmd'] as String? ?? '';
+    if (cmd.isEmpty || !p.isAbsolute(cmd)) return false;
+    // 指纹（mtimeMs:size）：文件被替换/更新即过期
+    final fp = _fingerprint(cmd);
+    if (fp == null || fp != (c['fp'] as String? ?? '')) return false;
+
+    _whisperCmd = cmd;
+    _baseArgs = ((c['baseArgs'] as List?) ?? const []).cast<String>();
+    _sourceLabel = c['label'] as String?;
+    _activeBackend = backend;
+    activeBackend.value = backend;
+    _available = true;
+    _error = null;
+    availability.value = true;
+    return true;
+  }
+
+  /// 可执行文件指纹（mtimeMs:size）；非绝对路径 / 无法 stat 返回 null。
+  String? _fingerprint(String cmd) {
+    try {
+      final st = File(cmd).statSync();
+      if (st.type == FileSystemEntityType.notFound) return null;
+      return '${st.modified.millisecondsSinceEpoch}:${st.size}';
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 后台静默复检缓存命中项；失败则清缓存并转不可用。
+  void _revalidateInBackground() {
+    final cmd = _whisperCmd;
+    final backend = _activeBackend;
+    if (cmd == null || backend == null) return;
+    unawaited(() async {
+      final ok = await _tryCommand(cmd, _baseArgs, _sourceLabel ?? '缓存', backend);
+      if (ok) return;
+      await StorageService.instance
+          .setSetting(StorageService.kWhisperDetection, '');
+      _available = false;
+      _error = '缓存的 Whisper 已失效（复检失败），请在设置页重新检测';
+      _whisperCmd = null;
+      _activeBackend = null;
+      activeBackend.value = null;
+      availability.value = false;
+      Logger.instance.log('Whisper 缓存复检失败，已清除缓存', tag: 'WHISPER');
+    }());
   }
 
   Future<void> _detect() async {
@@ -197,6 +278,7 @@ class WhisperService {
           '检测到 Whisper（来源：$_sourceLabel，后端：${b.label}）',
           tag: 'WHISPER',
         );
+        await _saveDetectionCache(configured, pref.code);
         return;
       }
     }
@@ -205,6 +287,26 @@ class WhisperService {
         '请安装 openai-whisper（pip install -U openai-whisper）或 '
         'faster-whisper（pip install -U faster-whisper-ctranslate2），'
         '或在本页指定可执行文件路径。';
+  }
+
+  /// 探测成功后缓存结果（仅绝对路径可指纹；PATH 相对命令不缓存）。
+  Future<void> _saveDetectionCache(String pathCfg, String prefCfg) async {
+    final cmd = _whisperCmd;
+    if (cmd == null || !p.isAbsolute(cmd)) return;
+    final fp = _fingerprint(cmd);
+    if (fp == null) return;
+    await StorageService.instance.setSetting(
+      StorageService.kWhisperDetection,
+      jsonEncode({
+        'cmd': cmd,
+        'baseArgs': _baseArgs,
+        'backend': _activeBackend?.code,
+        'label': _sourceLabel,
+        'fp': fp,
+        'pathCfg': pathCfg,
+        'prefCfg': prefCfg,
+      }),
+    );
   }
 
   /// 探测单个后端：自定义路径优先，然后常见 conda/Python Scripts →
@@ -272,10 +374,11 @@ class WhisperService {
     WhisperBackend backend,
   ) async {
     try {
-      final r = await Process.run(cmd, [...base, '--help'],
-          stdoutEncoding: utf8,
-          stderrEncoding: utf8,
-          environment: _pythonEnv());
+      final r = await (probeOverride?.call(cmd, [...base, '--help']) ??
+          Process.run(cmd, [...base, '--help'],
+              stdoutEncoding: utf8,
+              stderrEncoding: utf8,
+              environment: _pythonEnv()));
       if (r.exitCode != 0) return false;
       _whisperCmd = cmd;
       _baseArgs = base;
@@ -322,6 +425,21 @@ class WhisperService {
         'PYTHONIOENCODING': 'utf-8',
         'PYTHONUNBUFFERED': '1',
       };
+
+  /// 测试重置：清空检测状态与缓存命中字段（不触存储）。
+  @visibleForTesting
+  void resetForTesting() {
+    _checked = false;
+    _available = false;
+    _error = null;
+    _sourceLabel = null;
+    _whisperCmd = null;
+    _baseArgs = const [];
+    _activeBackend = null;
+    availability.value = false;
+    activeBackend.value = null;
+    detecting.value = false;
+  }
 
   // ───────────────────────── 模型缓存管理 ─────────────────────────
 
