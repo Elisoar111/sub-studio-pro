@@ -1,12 +1,17 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../core/theme.dart';
 import '../core/utils/filename_template.dart';
+import '../core/utils/reveal_file.dart';
 import '../l10n/app_localizations.dart';
 import '../providers/app_providers.dart';
 import '../services/file_service.dart';
 import '../services/ffmpeg/ffmpeg_service.dart';
+import '../services/logging/debug_bundle.dart';
 import '../services/mkvtoolnix/mkvtoolnix_service.dart';
 import '../services/storage_service.dart';
 import '../services/watch_folder_service.dart';
@@ -152,6 +157,32 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('临时文件已清理')),
       );
+    }
+  }
+
+  /// 导出调试包（v1.5 崩溃与日志）：logs 目录 JSON 日志 + 脱敏设置
+  /// 打成 zip 存到文档目录，并在资源管理器中显示。
+  Future<void> _exportDebugBundle() async {
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      final now = DateTime.now();
+      String two(int n) => n.toString().padLeft(2, '0');
+      final stamp = '${now.year}${two(now.month)}${two(now.day)}-'
+          '${two(now.hour)}${two(now.minute)}${two(now.second)}';
+      final zip = DebugBundle.export(
+        logsDir: Directory('${docs.path}${Platform.pathSeparator}logs'),
+        settings: StorageService.instance.dumpSettings(),
+        outputPath:
+            '${docs.path}${Platform.pathSeparator}subtitle-studio-debug-$stamp.zip',
+      );
+      await revealInFileManager(zip.path);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('调试包已导出：${zip.path}')),
+        );
+      }
+    } catch (e) {
+      if (mounted) showErrorSnack(context, '导出失败：$e');
     }
   }
 
@@ -619,6 +650,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             onPressed: _cleanTemp,
             icon: const Icon(Icons.cleaning_services_outlined),
             label: const Text('清理临时文件'),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: _exportDebugBundle,
+            icon: const Icon(Icons.archive_outlined),
+            label: const Text('导出调试包（日志 + 脱敏设置）'),
           ),
         ],
       ),

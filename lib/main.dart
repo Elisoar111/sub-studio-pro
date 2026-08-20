@@ -1,13 +1,18 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
+import 'core/utils/logger.dart';
 import 'providers/app_providers.dart';
 import 'services/ffmpeg/ffmpeg_service.dart';
+import 'services/logging/crash_guard.dart';
+import 'services/logging/log_file_store.dart';
 import 'services/mkvtoolnix/mkvtoolnix_service.dart';
 import 'services/notification_service.dart';
 import 'services/queue_service.dart';
@@ -50,6 +55,9 @@ Future<void> _exitApp() async {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // 0) 崩溃捕获（v1.5）：先挂异常钩子（此时仅内存缓冲，待日志目录确定后落盘）
+  CrashGuard.install();
+
   // 1) 媒体库初始化（libmpv）
   MediaKit.ensureInitialized();
 
@@ -71,6 +79,16 @@ Future<void> main() async {
 
   // 3) 本地存储（Hive）
   await StorageService.instance.init();
+
+  // 3b) 结构化日志落盘（v1.5）：文档目录 logs/，JSON Lines + 大小轮转
+  //     （路径不可用时静默跳过，仅保留内存缓冲）
+  try {
+    final docs = await getApplicationDocumentsDirectory();
+    Logger.instance.attachFileStore(LogFileStore(
+        Directory('${docs.path}${Platform.pathSeparator}logs')));
+  } catch (e) {
+    Logger.instance.error('日志目录初始化失败，仅内存缓冲', e);
+  }
 
   // 4) FFmpeg：优先使用用户在设置中指定的可执行文件路径，否则查找 PATH。
   //    未检测到时应用仍可启动，在设置页配置后重新检测。

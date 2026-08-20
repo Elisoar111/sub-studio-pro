@@ -189,4 +189,14 @@ class StorageService {
   Future<void> setSetting(String key, String value) async {
     await _settings?.put(key, value);
   }
+
+  /// 全量导出设置键值（调试包数据源；DebugBundle 负责脱敏）。
+  Map<String, String> dumpSettings() {
+    final store = _settings;
+    if (store == null) return const {};
+    return {
+      for (final k in store.keys)
+        if (store.get(k) is String) k: store.get(k) as String,
+    };
+  }
 }
