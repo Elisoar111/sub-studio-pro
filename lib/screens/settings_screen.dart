@@ -23,12 +23,12 @@ import '../services/whisper/whisper_service.dart';
 import '../widgets/common.dart';
 
 /// 设置页（锚点导航结构化）：宽窗口左侧锚点（外观 / 输出 / 环境依赖 /
-/// AI / 维护）+ 右侧滚动内容，点击锚点跳转分组、滚动时高亮跟随；
-/// 窄窗口（< 840）退化为纯滚动列表。
+/// AI / 自动化 / 快捷键 / 维护）+ 右侧滚动内容，点击锚点跳转分组、
+/// 滚动时高亮跟随；窄窗口（< 840）退化为纯滚动列表。
 ///
 /// 分组构成：外观 = 主题；输出 = 输出默认值；环境依赖 = FFmpeg +
 /// MKVToolNix + Whisper；AI = 翻译 API；自动化 = 托盘 / 监视文件夹；
-/// 维护 = 版本与更新（v2.1.0 自关于页迁入）+ 临时文件清理。
+/// 快捷键 = 默认快捷键速查（v2.1.1）；维护 = 版本与更新 + 临时文件清理。
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key, this.updateService});
 
@@ -43,7 +43,7 @@ class SettingsScreen extends ConsumerStatefulWidget {
 enum _UpdatePhase { idle, checking, upToDate, available, downloading, failed }
 
 /// 锚点分组。
-enum _Group { appearance, output, env, ai, automation, maintenance }
+enum _Group { appearance, output, env, ai, automation, shortcuts, maintenance }
 
 class _GroupNav {
   final _Group group;
@@ -105,6 +105,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _GroupNav(_Group.env, Icons.handyman_outlined, '环境依赖'),
     _GroupNav(_Group.ai, Icons.smart_toy_outlined, 'AI'),
     _GroupNav(_Group.automation, Icons.auto_awesome_outlined, '自动化'),
+    _GroupNav(_Group.shortcuts, Icons.keyboard_outlined, '快捷键'),
     _GroupNav(_Group.maintenance, Icons.build_outlined, '维护'),
   ];
 
@@ -415,6 +416,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       const SizedBox(height: 24),
       groupHead(_Group.automation, _automationSection(settings, scheme)),
       const SizedBox(height: 24),
+      groupHead(_Group.shortcuts, _shortcutsSection(scheme)),
+      const SizedBox(height: 24),
       groupHead(_Group.maintenance,
           _maintenanceSection(settings, scheme)),
     ];
@@ -636,6 +639,88 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   color: scheme.onSurfaceVariant,
                 ),
           ),
+        ],
+      ),
+    );
+  }
+
+  /// 快捷键速查（v2.1.1）：内置默认快捷键只读展示，暂不支持自定义。
+  Widget _shortcutsSection(ColorScheme scheme) {
+    const globalRows = [
+      ('Ctrl + 1..9', '直达侧边栏对应功能页'),
+      ('Ctrl + Q', '打开任务队列'),
+    ];
+    const playerRows = [
+      ('空格', '播放 / 暂停'),
+      ('← / →', '快退 5 秒 / 快进 5 秒'),
+      ('↑ / ↓', '音量 +5 / -5'),
+      ('F', '切换全屏'),
+      ('S', '截图当前帧'),
+    ];
+    const keyStyle =
+        TextStyle(fontFamily: 'Consolas', fontSize: 13, height: 1.2);
+
+    Table table(List<(String, String)> rows) {
+      return Table(
+        columnWidths: const {
+          0: IntrinsicColumnWidth(),
+          1: FlexColumnWidth(),
+        },
+        defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+        children: [
+          for (var i = 0; i < rows.length; i++)
+            TableRow(
+              decoration: i == rows.length - 1
+                  ? null
+                  : BoxDecoration(
+                      border: Border(
+                        bottom: BorderSide(color: scheme.outlineVariant),
+                      ),
+                    ),
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Text(rows[i].$1, style: keyStyle),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 8, 0, 8),
+                  child: Text(rows[i].$2),
+                ),
+              ],
+            ),
+        ],
+      );
+    }
+
+    Widget subhead(String label) => Padding(
+          padding: const EdgeInsets.fromLTRB(0, 16, 0, 4),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        );
+
+    return SectionCard(
+      title: '快捷键',
+      icon: Icons.keyboard_outlined,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '内置默认快捷键，暂不支持自定义。',
+            style: Theme.of(context)
+                .textTheme
+                .bodySmall
+                ?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+          subhead('全局'),
+          table(globalRows),
+          subhead('视频预览播放器'),
+          table(playerRows),
         ],
       ),
     );

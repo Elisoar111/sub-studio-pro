@@ -85,12 +85,23 @@ jobs:
           Compress-Archive -Path "$buildDir\*" -DestinationPath "subtitle-studio-pro-$ver-portable.zip"
           Get-ChildItem installer\dist\*.exe, *.zip | Select-Object Name, Length
 
+      # SHA-256 校验和：随 artifact 与 Release 发布，供用户验证下载完整性
+      - name: Generate checksums.txt
+        shell: pwsh
+        run: |
+          $artifacts = @(Get-Item 'installer\dist\*-setup.exe') + @(Get-Item '*-portable.zip')
+          $artifacts | ForEach-Object {
+            '{0}  {1}' -f (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLower(), $_.Name
+          } | Out-File -FilePath checksums.txt -Encoding ascii
+          Get-Content checksums.txt
+
       - uses: actions/upload-artifact@v4
         with:
           name: subtitle-studio-pro-${{ env.APP_VERSION }}
           path: |
             installer/dist/SubtitleStudioPro-*-setup.exe
             subtitle-studio-pro-*-portable.zip
+            checksums.txt
 
       # 仅 tag 触发：创建 GitHub Release 并挂双资产
       # （setup.exe + portable.zip，自动更新 v1.5-2 的数据源）
@@ -100,4 +111,5 @@ jobs:
           files: |
             installer/dist/SubtitleStudioPro-*-setup.exe
             subtitle-studio-pro-*-portable.zip
+            checksums.txt
           generate_release_notes: true

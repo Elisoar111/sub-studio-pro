@@ -44,8 +44,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // 五个锚点齐全
-    for (final label in ['外观', '输出', '环境依赖', 'AI', '维护']) {
+    // 六个锚点齐全（v2.1.1 新增「快捷键」）
+    for (final label in ['外观', '输出', '环境依赖', 'AI', '自动化', '快捷键', '维护']) {
       expect(find.widgetWithText(ListTile, label), findsOneWidget,
           reason: '缺少锚点导航项：$label');
     }
@@ -76,6 +76,15 @@ void main() {
     expect(onScreen(tester, 'AI 字幕翻译'), isTrue,
         reason: '点击「AI」锚点后 AI 翻译分组应滚入视口');
     expect(selected('AI'), isTrue);
+
+    // 点击「快捷键」（v2.1.1）→ 默认快捷键速查表滚入视口
+    await tester.tap(find.widgetWithText(ListTile, '快捷键'));
+    await tester.pumpAndSettle();
+    expect(onScreen(tester, 'Ctrl + Q'), isTrue,
+        reason: '点击「快捷键」锚点后速查表应滚入视口');
+    expect(find.text('直达侧边栏对应功能页'), findsOneWidget);
+    expect(find.text('播放 / 暂停'), findsOneWidget);
+    expect(selected('快捷键'), isTrue);
 
     // 手动滚回顶部 → 高亮回到「外观」（滚动联动）
     await tester.drag(
