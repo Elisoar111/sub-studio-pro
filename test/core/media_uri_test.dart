@@ -3,28 +3,26 @@ import 'package:subtitle_studio_pro/core/utils/media_uri.dart';
 
 void main() {
   group('mediaFromPath', () {
-    test('普通 Windows 路径转标准 file URI', () {
+    // media_kit ≥1.2：Media 构造时把入参归一化为 libmpv 内部使用的
+    // 纯文件路径（正斜杠、无 file:// 前缀、特殊字符原样保留）。
+    test('普通 Windows 路径归一化为正斜杠纯路径', () {
       final uri = mediaFromPath(r'C:\Videos\a.mkv').uri;
-      expect(uri, 'file:///C:/Videos/a.mkv');
+      expect(uri, 'C:/Videos/a.mkv');
     });
 
-    test('路径含 # 时不被截断为 fragment', () {
+    test('路径含 # 时保留原字、不截断（纯路径直传 mpv）', () {
       final uri = mediaFromPath(r'D:\Anime\EP#01 [合集]\video.mkv').uri;
-      final parsed = Uri.parse(uri);
-      expect(parsed.fragment, isEmpty);
-      expect(parsed.path, contains('EP%2301'));
+      expect(uri, 'D:/Anime/EP#01 [合集]/video.mkv');
     });
 
-    test('路径含 % 时不发生二次解码错位', () {
+    test('路径含 % 时原样保留，不发生二次解码错位', () {
       final uri = mediaFromPath(r'E:\100% 精华\pv.mkv').uri;
-      final parsed = Uri.parse(uri);
-      expect(parsed.path, contains('100%25'));
+      expect(uri, 'E:/100% 精华/pv.mkv');
     });
 
-    test('中文与空格可往返解码还原原路径', () {
-      const path = r'D:\动画 我的\第 01 集.mkv';
-      final parsed = Uri.parse(mediaFromPath(path).uri);
-      expect(Uri.decodeComponent(parsed.path), '/D:/动画 我的/第 01 集.mkv');
+    test('中文与空格原样保留', () {
+      final uri = mediaFromPath(r'D:\动画 我的\第 01 集.mkv').uri;
+      expect(uri, 'D:/动画 我的/第 01 集.mkv');
     });
   });
 }

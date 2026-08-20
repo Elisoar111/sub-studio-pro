@@ -26,18 +26,14 @@ dependencies:
   file_picker: ^12.0.0
 
   # ── 拖拽导入（文件拖入窗口直接入列）
-  # 注：desktop_drop ≥0.5.0 强制 web ^1.0（0.6+ 要 web ^1.1），与 share_plus 9.x
-  # 的 web ^0.5 冲突 —— 随 v1.3 依赖大迁移一起升
-  desktop_drop: ^0.4.4
+  desktop_drop: ^0.7.1
 
   # ── 系统通知（任务完成 toast）
   local_notifier: ^0.1.6
 
   # ── 视频播放（libmpv，Windows 全格式：mp4/mkv/mov/avi/flv/webm 及 Hi10P）
-  # 注：media_kit ≥1.2.0 强制 web ^1.1.0，与 share_plus 9.x / file_picker 8.0.x
-  # 的 web ^0.5 冲突 —— 随 v1.3 依赖大迁移（share_plus 12 + file_picker 12）一起升
-  media_kit: ^1.1.11
-  media_kit_video: ^1.2.5
+  media_kit: ^1.2.6
+  media_kit_video: ^2.0.1
   media_kit_libs_video: ^1.0.5
 
   # ── 分享 / 结果导出（Windows 上 fallback 到另存为）
