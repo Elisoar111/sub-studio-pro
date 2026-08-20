@@ -21,6 +21,11 @@ jobs:
 
       - run: flutter pub get
 
+      # mux 集成测试（轨道封装/提取）需要 mkvmerge：choco 装完在 PATH，
+      # 测试内 PATH 查找回退即可命中
+      - name: Install MKVToolNix (mux integration tests)
+        run: choco install mkvtoolnix -y --no-progress
+
       - name: dart analyze
         run: dart analyze
 

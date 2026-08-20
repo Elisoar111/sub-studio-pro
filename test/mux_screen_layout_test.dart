@@ -10,6 +10,18 @@ import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:subtitle_studio_pro/screens/track_screen.dart';
 import 'package:subtitle_studio_pro/services/mkvtoolnix/mkvtoolnix_service.dart';
 
+/// 在 PATH 各目录里找 mkvmerge.exe（CI 用 choco 安装后只存在于 PATH）。
+String? _mkvmergeOnPath() {
+  final dirs = (Platform.environment['PATH'] ?? '').split(';');
+  for (final dir in dirs) {
+    if (dir.isEmpty) continue;
+    final sep = (dir.endsWith('\\') || dir.endsWith('/')) ? '' : '\\';
+    final f = File('$dir${sep}mkvmerge.exe');
+    if (f.existsSync()) return f.path;
+  }
+  return null;
+}
+
 /// 封装页布局回归测试（dev-fix）：
 /// - 纯重封装（无外部轨道，仅对源 MKV 删减轨道）时源轨道列表必须渲染
 /// - 章节/标签等全局项默认折叠，展开后可勾选
@@ -37,7 +49,8 @@ void main() {
       r'D:\Program Files\MKVToolNix\mkvmerge.exe',
       r'C:\Program Files\MKVToolNix\mkvmerge.exe',
       r'C:\Program Files (x86)\MKVToolNix\mkvmerge.exe',
-    ].firstWhereOrNull((p) => File(p).existsSync());
+    ].firstWhereOrNull((p) => File(p).existsSync()) ??
+        _mkvmergeOnPath();
     if (mkvmerge == null) {
       throw StateError('未找到 mkvmerge，跳过封装页布局测试');
     }
