@@ -28,10 +28,22 @@ class TaskQueueScreen extends StatelessWidget {
             builder: (context, ref, _) {
               final q = ref.watch(queueProvider);
               final hasPending = q.hasPending;
-              return TextButton(
-                onPressed: hasPending && !q.isRunning ? q.start : null,
-                child: const Text('开始'),
-              );
+              return Row(children: [
+                TextButton(
+                  onPressed: hasPending && !q.isRunning ? q.start : null,
+                  child: const Text('开始'),
+                ),
+                // v2.0：暂停/恢复（运行中任务跑完，pending 挂起；托盘同入口）
+                if (q.isRunning || q.isPaused)
+                  TextButton.icon(
+                    onPressed: q.togglePause,
+                    icon: Icon(
+                      q.isPaused ? Icons.play_arrow : Icons.pause,
+                      size: 18,
+                    ),
+                    label: Text(q.isPaused ? '恢复' : '暂停'),
+                  ),
+              ]);
             },
           ),
           PopupMenuButton<String>(

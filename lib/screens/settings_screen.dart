@@ -3,11 +3,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/theme.dart';
 import '../core/utils/filename_template.dart';
+import '../l10n/app_localizations.dart';
 import '../providers/app_providers.dart';
 import '../services/file_service.dart';
 import '../services/ffmpeg/ffmpeg_service.dart';
 import '../services/mkvtoolnix/mkvtoolnix_service.dart';
 import '../services/storage_service.dart';
+import '../services/watch_folder_service.dart';
 import '../services/whisper/whisper_models.dart';
 import '../services/whisper/whisper_service.dart';
 import '../widgets/common.dart';
@@ -26,7 +28,7 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 /// 锚点分组。
-enum _Group { appearance, output, env, ai, maintenance }
+enum _Group { appearance, output, env, ai, automation, maintenance }
 
 class _GroupNav {
   final _Group group;
@@ -78,6 +80,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _GroupNav(_Group.output, Icons.output_outlined, '输出'),
     _GroupNav(_Group.env, Icons.handyman_outlined, '环境依赖'),
     _GroupNav(_Group.ai, Icons.smart_toy_outlined, 'AI'),
+    _GroupNav(_Group.automation, Icons.auto_awesome_outlined, '自动化'),
     _GroupNav(_Group.maintenance, Icons.build_outlined, '维护'),
   ];
 
@@ -210,6 +213,89 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
+  // ───────────────────────── 监视文件夹（v2.0） ─────────────────────────
+
+  /// 配置变更后统一入口：落库 + 同步监视服务（即时启停，无需重启）。
+  Future<void> _saveWatch({
+    bool? enabled,
+    String? dir,
+    String? outputDir,
+  }) async {
+    await ref
+        .read(settingsProvider)
+        .setWatchConfig(enabled: enabled, dir: dir, outputDir: outputDir);
+    WatchFolderService.instance.syncFromSettings();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _pickWatchDir() async {
+    final dir = await FileService.instance.pickDirectory(
+      title: '选择监视目录',
+    );
+    if (dir != null) await _saveWatch(dir: dir);
+  }
+
+  Future<void> _pickWatchOutDir() async {
+    final dir = await FileService.instance.pickDirectory(
+      title: '选择自动烧录输出目录',
+    );
+    if (dir != null) await _saveWatch(outputDir: dir);
+  }
+
+  /// 目录展示行：图标 + 当前值（空 = 占位提示）+ 选择 / 清除按钮。
+  Widget _watchDirRow({
+    required IconData icon,
+    required String label,
+    required String value,
+    required String emptyText,
+    required Future<void> Function() onPick,
+    required Future<void> Function() onClear,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: scheme.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label,
+                    style: Theme.of(context)
+                        .textTheme
+                        .labelSmall
+                        ?.copyWith(color: scheme.onSurfaceVariant)),
+                Text(
+                  value.isEmpty ? emptyText : value,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: value.isEmpty ? scheme.onSurfaceVariant : null,
+                      ),
+                ),
+              ],
+            ),
+          ),
+          TextButton.icon(
+            onPressed: onPick,
+            icon: const Icon(Icons.drive_file_move_outline, size: 16),
+            label: const Text('选择…'),
+          ),
+          if (value.isNotEmpty)
+            Tooltip(
+              message: '清除',
+              child: IconButton(
+                icon: const Icon(Icons.close, size: 18),
+                onPressed: () => onClear(),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _saveTemplate() async {
     await ref
         .read(settingsProvider)
@@ -266,6 +352,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         KeyedSubtree(key: _groupKeys[g], child: child);
     return [
       groupHead(_Group.appearance, _themeSection(settings, scheme)),
+      const SizedBox(height: 12),
+      _languageSection(settings),
       const SizedBox(height: 24),
       groupHead(_Group.output, _outputSection(settings)),
       const SizedBox(height: 24),
@@ -277,8 +365,118 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       const SizedBox(height: 24),
       groupHead(_Group.ai, _aiSection(settings, scheme)),
       const SizedBox(height: 24),
+      groupHead(_Group.automation, _automationSection(settings, scheme)),
+      const SizedBox(height: 24),
       groupHead(_Group.maintenance, _maintenanceSection()),
     ];
+  }
+
+  /// 自动化（v2.0）：系统托盘常驻 + 监视文件夹流水线。
+  Widget _automationSection(SettingsProvider settings, ColorScheme scheme) {
+    final watching =
+        settings.watchEnabled && WatchFolderService.instance.isWatching;
+    return SectionCard(
+      title: '自动化',
+      icon: Icons.auto_awesome_outlined,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('关闭窗口时最小化到系统托盘'),
+            subtitle: const Text(
+              '关闭主窗后应用常驻托盘，任务后台继续；托盘菜单可显示主窗 / 暂停队列 / 退出',
+            ),
+            value: settings.closeToTray,
+            onChanged: settings.setCloseToTray,
+          ),
+          const Divider(height: 24),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('启用监视文件夹（无人值守自动烧录）'),
+            subtitle: const Text(
+              '监视目录顶层出现「新视频 + 同名字幕」且拷贝完成后，'
+              '自动创建烧录任务输出到输出目录；启动监视时已存在的文件不处理',
+            ),
+            value: settings.watchEnabled,
+            onChanged: (v) => _saveWatch(enabled: v),
+          ),
+          if (settings.watchEnabled) ...[
+            _watchDirRow(
+              icon: Icons.folder_open_outlined,
+              label: '监视目录',
+              value: settings.watchDir,
+              emptyText: '未设置（必填，选择后才开始监视）',
+              onPick: _pickWatchDir,
+              onClear: () => _saveWatch(dir: ''),
+            ),
+            _watchDirRow(
+              icon: Icons.drive_file_move_outline,
+              label: '输出目录',
+              value: settings.watchOutputDir,
+              emptyText: '未设置（默认 <监视目录>\\burned）',
+              onPick: _pickWatchOutDir,
+              onClear: () => _saveWatch(outputDir: ''),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                settings.watchDir.isEmpty
+                    ? '请先选择监视目录，否则监视不会启动。'
+                    : watching
+                        ? '正在监视：${settings.watchDir}'
+                        : '监视目录不存在或不可访问，请检查路径。',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: watching ? scheme.primary : scheme.error,
+                    ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// 语言（v2.0 多语言）：跟随系统 / 中文 / English，切换即时生效。
+  Widget _languageSection(SettingsProvider settings) {
+    final l10n = AppLocalizations.of(context);
+    final scheme = Theme.of(context).colorScheme;
+    return SectionCard(
+      title: l10n.settingsLanguageTitle,
+      icon: Icons.language_outlined,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SegmentedButton<String>(
+            segments: [
+              ButtonSegment(
+                value: 'system',
+                label: Text(l10n.settingsLanguageSystem),
+              ),
+              ButtonSegment(
+                value: 'zh',
+                label: Text(l10n.settingsLanguageZh),
+              ),
+              ButtonSegment(
+                value: 'en',
+                label: Text(l10n.settingsLanguageEn),
+              ),
+            ],
+            selected: {settings.localeMode},
+            showSelectedIcon: false,
+            onSelectionChanged: (s) =>
+                ref.read(settingsProvider).setLocaleMode(s.first),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            l10n.settingsLanguageHint,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+          ),
+        ],
+      ),
+    );
   }
 
   /// 左侧锚点导航：点击跳转到对应分组，当前分组高亮。

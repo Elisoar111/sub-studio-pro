@@ -35,6 +35,11 @@ class SettingsProvider extends ChangeNotifier {
   static const _kAiModel = 'ai_model';
   static const _kGlossary = 'ai_glossary';
   static const _kPolishCustomRules = 'ai_polish_custom_rules';
+  static const _kCloseToTray = 'close_to_tray';
+  static const _kLocaleMode = 'locale_mode';
+  static const _kWatchEnabled = 'watch_enabled';
+  static const _kWatchDir = 'watch_dir';
+  static const _kWatchOutputDir = 'watch_output_dir';
 
   ThemeMode _themeMode = ThemeMode.system;
   Color _seedColor = AppTheme.defaultSeed;
@@ -56,6 +61,18 @@ class SettingsProvider extends ChangeNotifier {
   /// AI 翻译：润色模式自定义附加指令（v1.3，空 = 仅内置规则）
   String _polishCustomRules = '';
 
+  /// 关闭窗口时最小化到系统托盘（v2.0，默认开启；关闭则直接退出）
+  bool _closeToTray = true;
+
+  /// 界面语言（v2.0 多语言）：'system'（跟随系统）/ 'zh' / 'en'。
+  String _localeMode = 'system';
+
+  /// 监视文件夹（v2.0 无人值守流水线）：开关 / 监视目录 / 输出目录
+  /// （输出目录空 = <监视目录>\burned）。
+  bool _watchEnabled = false;
+  String _watchDir = '';
+  String _watchOutputDir = '';
+
   ThemeMode get themeMode => _themeMode;
 
   /// 当前主题种子色
@@ -74,6 +91,24 @@ class SettingsProvider extends ChangeNotifier {
   List<GlossaryTerm> get glossary => List.unmodifiable(_glossary);
 
   String get polishCustomRules => _polishCustomRules;
+
+  bool get closeToTray => _closeToTray;
+
+  /// 当前语言模式（system / zh / en）。
+  String get localeMode => _localeMode;
+
+  /// MaterialApp locale 覆盖：system 返回 null（按平台解析）。
+  Locale? get localeOverride => switch (_localeMode) {
+        'zh' => const Locale('zh'),
+        'en' => const Locale('en'),
+        _ => null,
+      };
+
+  bool get watchEnabled => _watchEnabled;
+
+  String get watchDir => _watchDir;
+
+  String get watchOutputDir => _watchOutputDir;
 
   /// AI 翻译配置是否完整
   bool get aiReady =>
@@ -116,6 +151,17 @@ class SettingsProvider extends ChangeNotifier {
     _aiModel = StorageService.instance.getSetting(_kAiModel);
     _polishCustomRules =
         StorageService.instance.getSetting(_kPolishCustomRules);
+    _closeToTray = StorageService.instance.getSetting(
+      _kCloseToTray,
+      fallback: 'true',
+    ) != 'false';
+    final localeRaw =
+        StorageService.instance.getSetting(_kLocaleMode, fallback: 'system');
+    _localeMode = {'system', 'zh', 'en'}.contains(localeRaw) ? localeRaw : 'system';
+    _watchEnabled =
+        StorageService.instance.getSetting(_kWatchEnabled) == 'true';
+    _watchDir = StorageService.instance.getSetting(_kWatchDir);
+    _watchOutputDir = StorageService.instance.getSetting(_kWatchOutputDir);
     final glossaryRaw = StorageService.instance.getSetting(_kGlossary);
     if (glossaryRaw.isNotEmpty) {
       try {
@@ -200,6 +246,38 @@ class SettingsProvider extends ChangeNotifier {
     _polishCustomRules = rules;
     notifyListeners();
     await StorageService.instance.setSetting(_kPolishCustomRules, rules);
+  }
+
+  /// 设置关闭窗口行为：true = 最小化到托盘，false = 直接退出。
+  Future<void> setCloseToTray(bool value) async {
+    if (_closeToTray == value) return;
+    _closeToTray = value;
+    notifyListeners();
+    await StorageService.instance.setSetting(_kCloseToTray, '$value');
+  }
+
+  /// 切换界面语言（system / zh / en），MaterialApp 即时重建生效。
+  Future<void> setLocaleMode(String mode) async {
+    if (_localeMode == mode) return;
+    _localeMode = mode;
+    notifyListeners();
+    await StorageService.instance.setSetting(_kLocaleMode, mode);
+  }
+
+  /// 保存监视文件夹配置（v2.0）；调用方随后需触发
+  /// `WatchFolderService.instance.syncFromSettings()` 让监视即时生效。
+  Future<void> setWatchConfig({
+    bool? enabled,
+    String? dir,
+    String? outputDir,
+  }) async {
+    if (enabled != null) _watchEnabled = enabled;
+    if (dir != null) _watchDir = dir.trim();
+    if (outputDir != null) _watchOutputDir = outputDir.trim();
+    notifyListeners();
+    await StorageService.instance.setSetting(_kWatchEnabled, '$_watchEnabled');
+    await StorageService.instance.setSetting(_kWatchDir, _watchDir);
+    await StorageService.instance.setSetting(_kWatchOutputDir, _watchOutputDir);
   }
 
   /// 刷新 FFmpeg 检测状态（设置页保存新路径后调用）。

@@ -41,9 +41,11 @@ class QueueService extends ChangeNotifier {
   final List<QueueTask> _tasks = [];
   final Map<String, CancelToken> _tokens = {};
   bool _running = false;
+  bool _paused = false;
 
   List<QueueTask> get tasks => List.unmodifiable(_tasks);
   bool get isRunning => _running;
+  bool get isPaused => _paused;
   bool get hasPending =>
       _tasks.any((t) => t.status == TaskStatus.pending);
 
@@ -136,6 +138,13 @@ class QueueService extends ChangeNotifier {
     required void Function(QueueTask task) count,
   }) async {
     while (true) {
+      // 暂停中：该车道仍有 pending 任务时挂起等待（不打断运行中任务）；
+      // pending 被清空则允许车道退出，避免永久挂起
+      while (_paused &&
+          _tasks.any((t) =>
+              t.status == TaskStatus.pending && t.type.isNetwork == network)) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
       QueueTask? next;
       for (final t in _tasks) {
         if (t.status == TaskStatus.pending && t.type.isNetwork == network) {
@@ -201,6 +210,28 @@ class QueueService extends ChangeNotifier {
     notifyListeners();
     _historySaver?.call(task);
   }
+
+  // ─────────────────────── 暂停 / 恢复 ───────────────────────
+
+  /// 暂停队列：运行中任务继续跑完，pending 任务挂起不再拉起（托盘/队列页可触发）。
+  void pause() {
+    if (_paused) return;
+    _paused = true;
+    notifyListeners();
+  }
+
+  /// 恢复队列：解除挂起；若调度循环已退出（暂停期间跑空），自动重新拉起。
+  void resume() {
+    if (!_paused) return;
+    _paused = false;
+    notifyListeners();
+    if (!_running && hasPending) {
+      start();
+    }
+  }
+
+  /// 暂停 ↔ 恢复切换（托盘菜单单入口）。
+  void togglePause() => _paused ? resume() : pause();
 
   // ─────────────────────── 取消 / 管理 ───────────────────────
 

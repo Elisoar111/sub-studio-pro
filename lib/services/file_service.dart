@@ -134,9 +134,11 @@ class FileService {
   }
 
   /// 选择目录（返回目录路径）。
-  Future<String?> pickDirectory() async {
+  Future<String?> pickDirectory({String? title}) async {
     try {
-      return await FilePicker.getDirectoryPath(dialogTitle: '选择目录');
+      return await FilePicker.getDirectoryPath(
+        dialogTitle: title ?? '选择目录',
+      );
     } catch (e) {
       Logger.instance.error('目录选择失败', e);
       return null;

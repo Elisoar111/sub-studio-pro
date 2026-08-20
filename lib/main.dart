@@ -12,24 +12,48 @@ import 'services/mkvtoolnix/mkvtoolnix_service.dart';
 import 'services/notification_service.dart';
 import 'services/queue_service.dart';
 import 'services/storage_service.dart';
+import 'services/tray_service.dart';
+import 'services/watch_folder_service.dart';
 import 'services/whisper/whisper_service.dart';
+
+/// 窗口关闭拦截（v2.0 托盘常驻）：
+/// - 「最小化到托盘」开启（默认）：关闭按钮 → 隐藏窗口，任务后台继续；
+/// - 关闭该设置：关闭按钮 → 真正退出。
+class _WindowCloseHandler with WindowListener {
+  @override
+  void onWindowClose() async {
+    if (SettingsProvider.instance.closeToTray) {
+      await windowManager.hide();
+      return;
+    }
+    await _exitApp();
+  }
+}
+
+/// 退出应用：清理托盘图标后销毁窗口（setPreventClose 下 destroy 仍生效）。
+Future<void> _exitApp() async {
+  await TrayService.instance.shutdown();
+  await windowManager.destroy();
+}
 
 /// 应用入口（仅 Windows 桌面）。
 ///
 /// 初始化顺序：
 /// 1. media_kit（libmpv）——播放器内核；
-/// 2. window_manager —— 窗口标题 / 尺寸 / 最小尺寸；
+/// 2. window_manager —— 窗口标题 / 尺寸 / 最小尺寸 + 关闭拦截；
 /// 3. Hive —— 历史 / 设置；
 /// 4. FFmpeg —— 检测系统 FFmpeg（优先用户自定义路径，否则 PATH）；
 /// 5. 状态（Riverpod providers）；
-/// 6. 任务队列接入 FFmpeg 与历史记录。
+/// 6. 任务队列接入 FFmpeg 与历史记录；
+/// 7. 系统托盘常驻（关闭最小化到托盘、任务后台继续）；
+/// 8. 监视文件夹 —— 按设置恢复无人值守自动烧录流水线。
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // 1) 媒体库初始化（libmpv）
   MediaKit.ensureInitialized();
 
-  // 2) 窗口管理
+  // 2) 窗口管理 + 关闭拦截（v2.0：关闭 = 最小化到托盘）
   await windowManager.ensureInitialized();
   const windowOptions = WindowOptions(
     size: Size(1200, 800),
@@ -39,9 +63,11 @@ Future<void> main() async {
     titleBarStyle: TitleBarStyle.normal,
   );
   windowManager.waitUntilReadyToShow(windowOptions, () async {
+    await windowManager.setPreventClose(true);
     await windowManager.show();
     await windowManager.focus();
   });
+  windowManager.addListener(_WindowCloseHandler());
 
   // 3) 本地存储（Hive）
   await StorageService.instance.init();
@@ -76,6 +102,13 @@ Future<void> main() async {
     ffmpeg: ffmpeg,
     onTaskFinished: (task) => HistoryProvider.instance.addFromTask(task),
   );
+
+  // 7) 系统托盘（关闭最小化到托盘，任务后台继续；菜单退出走 _exitApp）
+  await TrayService.instance.init(onExit: _exitApp);
+
+  // 8) 监视文件夹（v2.0 无人值守流水线）：按已保存配置恢复监视
+  //    （未启用 / 未配置目录时为幂等空操作）
+  WatchFolderService.instance.syncFromSettings();
 
   runApp(const ProviderScope(child: SubtitleStudioApp()));
 }
