@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../l10n/app_localizations.dart';
+import '../providers/app_providers.dart';
 import 'about_screen.dart';
 import 'burn_screen.dart';
 import 'history_screen.dart';
@@ -80,6 +81,20 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     const TaskQueueScreen(),
     const HistoryScreen(),
   ];
+
+  /// 字幕库在侧边栏中的索引（文件关联双击字幕启动时直达）。
+  static const _libraryIndex = 1;
+
+  @override
+  void initState() {
+    super.initState();
+    // 文件关联（v1.5）：双击字幕文件启动 → 自动切到字幕库（该页
+    // initState 会消费同一 provider 把文件播种进列表）
+    if (ref.read(startupSubtitleFilesProvider).isNotEmpty) {
+      _visited[_libraryIndex] = true;
+      _index = _libraryIndex;
+    }
+  }
 
   void _select(int i) {
     setState(() {

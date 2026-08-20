@@ -17,6 +17,9 @@ ios/Flutter/ephemeral/
 # 克隆后自行放置或依赖系统 PATH，见 README「快速开始」）
 resources/ffmpeg/
 
+# Inno Setup 编译产物（installer\dist\SubtitleStudioPro-*-setup.exe）
+installer/dist/
+
 # 运行时产物
 /tmp/
 *.jks

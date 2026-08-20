@@ -5,6 +5,8 @@ on:
     branches: [main]
     tags: ['v*']
   pull_request:
+  # 手动触发 release 构建：不打 tag 也能验证安装包/便携版产物
+  workflow_dispatch:
 
 jobs:
   quality:
@@ -33,10 +35,11 @@ jobs:
         run: flutter test
 
   release:
-    name: Build release (tag only)
+    name: Build release (tag / manual)
     runs-on: windows-latest
     needs: quality
-    if: startsWith(github.ref, 'refs/tags/v')
+    # tag 推送正式发布；workflow_dispatch 手动验证安装包产物
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     permissions:
       contents: write
     steps:
@@ -50,25 +53,51 @@ jobs:
 
       - run: flutter pub get
 
+      # 捆绑 FFmpeg（与本地 gyan full 同级规格：静态 GPL 全量构建，
+      # libass/x264/x265/NVENC 齐全；GitHub CDN 稳定 URL）。
+      # 须在 flutter build 前就位：CMake POST_BUILD 拷进 Release\resources\ffmpeg
+      - name: Download bundled FFmpeg
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip'
+          curl.exe -L -o ffmpeg.zip $url
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-tmp
+          New-Item -ItemType Directory -Force resources/ffmpeg | Out-Null
+          Copy-Item ffmpeg-tmp/ffmpeg-master-latest-win64-gpl/bin/ffmpeg.exe resources/ffmpeg/
+          Copy-Item ffmpeg-tmp/ffmpeg-master-latest-win64-gpl/bin/ffprobe.exe resources/ffmpeg/
+          Remove-Item ffmpeg.zip
+          Remove-Item -Recurse -Force ffmpeg-tmp
+
       - name: flutter build windows (release)
         run: flutter build windows --release
 
-      # 便携版 zip：Release 目录全量（含 media_kit 的 mpv.dll；FFmpeg 若
-      # 在 resources/ffmpeg/ 存在则由 CMake POST_BUILD 一并带入）
-      - name: Package portable zip
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      # 版本号取 pubspec（tag 与手动触发统一命名），供后续步骤引用
+      - name: Build installer + portable zip
         shell: pwsh
         run: |
-          $zip = "subtitle-studio-pro-${{ github.ref_name }}-portable.zip"
-          Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath $zip
-          Get-Item $zip | Select-Object Name, Length
+          $ver = (Select-String -Path pubspec.yaml -Pattern '^version:\s*([\d.]+)').Matches[0].Groups[1].Value
+          "APP_VERSION=$ver" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $buildDir = "$pwd\build\windows\x64\runner\Release"
+          ISCC.exe /DAppVersion=$ver "/DAppBuildDir=$buildDir" installer\subtitle-studio-pro.iss
+          Compress-Archive -Path "$buildDir\*" -DestinationPath "subtitle-studio-pro-$ver-portable.zip"
+          Get-ChildItem installer\dist\*.exe, *.zip | Select-Object Name, Length
 
       - uses: actions/upload-artifact@v4
         with:
-          name: subtitle-studio-pro-${{ github.ref_name }}-portable
-          path: subtitle-studio-pro-*.zip
+          name: subtitle-studio-pro-${{ env.APP_VERSION }}
+          path: |
+            installer/dist/SubtitleStudioPro-*-setup.exe
+            subtitle-studio-pro-*-portable.zip
 
-      # 创建 GitHub Release 并挂便携版资产（自动更新 v1.5-2 的数据源）
+      # 仅 tag 触发：创建 GitHub Release 并挂双资产
+      # （setup.exe + portable.zip，自动更新 v1.5-2 的数据源）
       - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
         with:
-          files: subtitle-studio-pro-*.zip
+          files: |
+            installer/dist/SubtitleStudioPro-*-setup.exe
+            subtitle-studio-pro-*-portable.zip
           generate_release_notes: true

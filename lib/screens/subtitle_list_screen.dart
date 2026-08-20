@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 
 import '../core/utils/time_format.dart';
+import '../providers/app_providers.dart';
 import '../services/file_service.dart';
 import '../widgets/common.dart';
 import 'convert_screen.dart';
@@ -11,20 +13,33 @@ import 'subtitle_preview_screen.dart';
 enum _SortBy { name, size, type }
 
 /// 字幕库：导入 / 排序 / 多选 / 批量转换 / 预览。
-class SubtitleListScreen extends StatefulWidget {
+class SubtitleListScreen extends ConsumerStatefulWidget {
   const SubtitleListScreen({super.key});
 
   @override
-  State<SubtitleListScreen> createState() => _SubtitleListScreenState();
+  ConsumerState<SubtitleListScreen> createState() =>
+      _SubtitleListScreenState();
 }
 
-class _SubtitleListScreenState extends State<SubtitleListScreen> {
+class _SubtitleListScreenState extends ConsumerState<SubtitleListScreen> {
   final List<PickedFile> _files = [];
   final Set<String> _selected = {};
   _SortBy _sort = _SortBy.name;
   bool _selectionMode = false;
 
   String _keyOf(PickedFile f) => f.path ?? 'web:${f.name}';
+
+  @override
+  void initState() {
+    super.initState();
+    // 文件关联（v1.5 安装包）：双击字幕文件启动 → 启动参数里的文件
+    // 直接进列表（与手动导入同一条数据通道，去重规则一致）
+    final startup = ref.read(startupSubtitleFilesProvider);
+    for (final path in startup) {
+      final f = FileService.pickedFromFile(path);
+      if (!_files.any((x) => _keyOf(x) == f.path)) _files.add(f);
+    }
+  }
 
   // ───────────────────────── 选择 ─────────────────────────
 

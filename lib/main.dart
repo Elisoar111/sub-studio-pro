@@ -9,6 +9,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
 import 'core/utils/logger.dart';
+import 'core/utils/startup_args.dart';
 import 'providers/app_providers.dart';
 import 'services/ffmpeg/ffmpeg_service.dart';
 import 'services/logging/crash_guard.dart';
@@ -52,11 +53,15 @@ Future<void> _exitApp() async {
 /// 6. 任务队列接入 FFmpeg 与历史记录；
 /// 7. 系统托盘常驻（关闭最小化到托盘、任务后台继续）；
 /// 8. 监视文件夹 —— 按设置恢复无人值守自动烧录流水线。
-Future<void> main() async {
+Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // 0) 崩溃捕获（v1.5）：先挂异常钩子（此时仅内存缓冲，待日志目录确定后落盘）
   CrashGuard.install();
+
+  // 0b) 文件关联（v1.5 安装包）：双击字幕文件启动时筛选出真实存在的
+  //     字幕路径，经 provider 交给字幕库播种 + HomeShell 自动导航
+  final startupSubtitles = subtitleFilesFromArgs(args);
 
   // 1) 媒体库初始化（libmpv）
   MediaKit.ensureInitialized();
@@ -128,5 +133,10 @@ Future<void> main() async {
   //    （未启用 / 未配置目录时为幂等空操作）
   WatchFolderService.instance.syncFromSettings();
 
-  runApp(const ProviderScope(child: SubtitleStudioApp()));
+  runApp(ProviderScope(
+    overrides: [
+      startupSubtitleFilesProvider.overrideWith((ref) => startupSubtitles),
+    ],
+    child: const SubtitleStudioApp(),
+  ));
 }

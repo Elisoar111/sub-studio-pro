@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 // riverpod 3：ChangeNotifierProvider 移入 legacy 库（本文件仅有此处使用）
 import 'package:flutter_riverpod/legacy.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart' show Provider;
 import '../core/theme.dart';
 import '../models/history_entry.dart';
 import '../models/queue_task.dart';
@@ -342,6 +343,13 @@ class HistoryProvider extends ChangeNotifier {
 /// 应用设置 / 主题 / FFmpeg 状态
 final settingsProvider = ChangeNotifierProvider<SettingsProvider>(
   (ref) => SettingsProvider.instance,
+);
+
+/// 启动参数带入的字幕文件路径（v1.5 文件关联：双击字幕文件打开应用，
+/// main 里用 [subtitleFilesFromArgs] 的结果覆盖；字幕库消费后播种列表，
+/// HomeShell 据此自动切到字幕库页）。
+final startupSubtitleFilesProvider = Provider<List<String>>(
+  (ref) => const [],
 );
 
 /// 操作历史
