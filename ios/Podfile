@@ -1,0 +1,55 @@
+# ════════════════════════════════════════════════════════════════
+# Subtitle Studio Pro — iOS Podfile
+#
+# ⚠️ 重要（ffmpeg-kit 要求）：
+#  1. platform :ios 必须 ≥ '12.1'（ffmpeg-kit v6 硬性要求）
+#  2. 必须关闭 Bitcode（ENABLE_BITCODE = NO），否则链接失败
+#  3. 若 ios/ 目录不完整（缺少 Runner.xcodeproj 等），
+#     先执行 `flutter create --platforms ios .` 重新生成，
+#     再覆盖本文件与 Info.plist
+# ════════════════════════════════════════════════════════════════
+platform :ios, '12.1'
+
+ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+project 'Runner', {
+  'Debug' => :debug,
+  'Profile' => :release,
+  'Release' => :release,
+}
+
+def flutter_root
+  generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
+  unless File.exist?(generated_xcode_build_settings_path)
+    raise "#{generated_xcode_build_settings_path} must exist. Run `flutter pub get` first."
+  end
+  File.foreach(generated_xcode_build_settings_path) do |line|
+    matches = line.match(/FLUTTER_ROOT\=(.*)/)
+    return matches[1].strip if matches
+  end
+  raise "FLUTTER_ROOT not found in #{generated_xcode_build_settings_path}. Try deleting Generated.xcconfig, then run `flutter pub get`."
+end
+
+require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
+
+flutter_ios_podfile_setup
+
+target 'Runner' do
+  use_frameworks!
+
+  flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+
+  target 'RunnerTests' do
+    inherit! :search_paths
+  end
+end
+
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    flutter_additional_ios_build_settings(target)
+    target.build_configurations.each do |config|
+      # ffmpeg-kit：必须关闭 Bitcode
+      config.build_settings['ENABLE_BITCODE'] = 'NO'
+    end
+  end
+end

@@ -1,0 +1,73 @@
+// ════════════════════════════════════════════════════════════════
+// Subtitle Studio Pro — Android 模块构建配置
+//
+// ⚠️ 重要（ffmpeg-kit 要求）：
+//  1. minSdkVersion 必须 ≥ 24（ffmpeg-kit v6 的硬性要求，默认 21 会编译失败）
+//  2. 若安装包过大，可开启 ABI 拆分（见下方注释）
+//  3. 如果 android/ 目录不完整（缺少 MainActivity.kt 等），
+//     先执行 `flutter create --platforms android .` 重新生成脚手架，
+//     再覆盖本文件与 AndroidManifest.xml
+// ════════════════════════════════════════════════════════════════
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withReader("UTF-8") { reader ->
+        localProperties.load(reader)
+    }
+}
+
+def flutterVersionCode = localProperties.getProperty("flutter.versionCode") ?: "1"
+def flutterVersionName = localProperties.getProperty("flutter.versionName") ?: "1.0"
+
+android {
+    namespace "com.subtitlestudio.pro"
+    compileSdk flutter.compileSdkVersion
+    ndkVersion flutter.ndkVersion
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = "1.8"
+    }
+
+    defaultConfig {
+        applicationId "com.subtitlestudio.pro"
+        // 关键：ffmpeg-kit 需要 API 24+
+        minSdkVersion 24
+        targetSdkVersion flutter.targetSdkVersion
+        versionCode flutterVersionCode.toInteger()
+        versionName flutterVersionName
+    }
+
+    // ffmpeg-kit 自带 .so 库，保持默认打包即可。
+    // 若需显著减小安装包体积，可拆 ABI：
+    //   splits {
+    //     abi { isEnable true; reset(); include "arm64-v8a", "armeabi-v7a", "x86_64"; isUniversalApk false }
+    //   }
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging false
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.debug // 正式发布请替换为 release 签名
+            minifyEnabled false
+            shrinkResources false
+        }
+    }
+}
+
+flutter {
+    source "../.."
+}

@@ -1,0 +1,60 @@
+name: subtitle_studio_pro
+description: "Subtitle Studio Pro —— Windows 字幕组专用视频处理工具：字幕格式转换 / 烧录 / 提取 / 转码压缩"
+publish_to: 'none'
+version: 1.2.0+2
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+  flutter: '>=3.19.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # ── 状态管理：Riverpod（编译期安全、异步支持好、无需手动 dispose）
+  flutter_riverpod: ^2.5.1
+
+  # ── 本地存储：Hive（纯 Dart，Windows 无原生依赖）
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+
+  # ── 文件与目录
+  path_provider: ^2.1.4
+  path: ^1.9.0
+
+  # ── 文件选择（Windows 原生对话框）
+  # 注：8.0.x 与 share_plus 9.x 兼容（web 0.5），8.1+ 需要 web 1.0 会冲突
+  file_picker: ^8.0.7
+
+  # ── 拖拽导入（文件拖入窗口直接入列）
+  desktop_drop: ^0.4.4
+
+  # ── 系统通知（任务完成 toast）
+  local_notifier: ^0.1.6
+
+  # ── 视频播放（libmpv，Windows 全格式：mp4/mkv/mov/avi/flv/webm 及 Hi10P）
+  media_kit: ^1.1.11
+  media_kit_video: ^1.2.5
+  media_kit_libs_video: ^1.0.5
+
+  # ── 分享 / 结果导出（Windows 上 fallback 到另存为）
+  share_plus: ^9.0.0
+  cross_file: ^0.3.4
+
+  # ── 字符编码（GBK / BIG5 字幕解码）
+  charset: ^1.0.0
+
+  # ── 窗口管理（标题、尺寸、最小尺寸）
+  window_manager: ^0.3.9
+
+  # ── 工具
+  uuid: ^4.5.1
+  flutter_big5: ^0.0.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
