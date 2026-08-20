@@ -1,7 +1,8 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+// riverpod 3：ChangeNotifierProvider 移入 legacy 库（本文件仅有此处使用）
+import 'package:flutter_riverpod/legacy.dart';
 import '../core/theme.dart';
 import '../models/history_entry.dart';
 import '../models/queue_task.dart';
