@@ -1,10 +1,10 @@
 # Subtitle Studio Pro
 
-Windows 字幕组专用视频处理工具（Flutter 桌面版），当前版本 **v1.2**。
+Windows 字幕组专用视频处理工具（Flutter 桌面版），当前版本 **v2.0**。
 
 [![Flutter](https://img.shields.io/badge/Flutter-3.x-02569B?logo=flutter&logoColor=white)](https://flutter.dev)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows11&logoColor=white)]()
-[![Tests](https://img.shields.io/badge/tests-192%2F192-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-273%2F273-brightgreen)]()
 [![analyze](https://img.shields.io/badge/dart%20analyze-0%20issues-brightgreen)]()
 
 字幕组从「拿到生肉」到「发布熟肉」的一站式桌面工具：字幕转码、轨道提取与
@@ -22,9 +22,12 @@ Windows 字幕组专用视频处理工具（Flutter 桌面版），当前版本 
 | 任务队列 | 网络/本地双车道并行调度；取消 / 重试 / 失败详情；历史记录联动 | v1.1 |
 | AI 字幕翻译 | OpenAI 兼容 API；术语表/人名表锁定；批间上下文；断点续传；可选润色二阶段；双语合并输出 | v1.2 |
 | Whisper 转写 | openai-whisper / faster-whisper 双后端；GPU 自动推荐；VAD 静音过滤；`{episode}` 提示词模板 | v1.2 |
+| 术语库与后端扩展 | `.glossary.json` 术语旁车（跨任务共享）；自定义润色指令；whisper.cpp 实验后端；依赖大版本迁移 | v1.3 |
+| 自动化与多语言 | 监视文件夹无人值守流水线（配对即烧录）；系统托盘常驻（暂停队列/退出）；中/英界面即时切换 | v2.0 |
 
 基础设施：全局快捷键、参数预设、历史记录、输出路径/文件名模板自定义、
-Material 3 多主题（亮/暗/种子色）、窗口 800×600~全屏自适应。
+Material 3 多主题（亮/暗/种子色）、zh/en 多语言（跟随系统或手动切换）、
+窗口 800×600~全屏自适应。
 
 > 视频处理通过子进程调用外部工具（FFmpeg/FFprobe、MKVToolNix、Whisper CLI），
 > 不依赖移动端 FFI 库；工具优先级：设置页自定义路径 → 捆绑 `resources/` → 系统 PATH。
@@ -55,7 +58,8 @@ lib/
 │   ├── queue_task.dart / task_params.dart / task_run_result.dart
 │   ├── mux_track.dart / encode_options.dart / video_info.dart / history_entry.dart
 ├── providers/app_providers.dart      # Riverpod：settings/history/preset/queue
-├── screens/                          # 14 个功能页
+├── l10n/                             # zh/en 双语言 ARB（gen-l10n；托盘经 L10nHolder）
+├── screens/                          # 18 个页面
 │   ├── home_shell.dart               #   NavigationRail 侧边导航 + 全局快捷键
 │   ├── convert / burn / transcode    #   字幕转换 / 烧录 / 转码
 │   ├── track_screen.dart             #   轨道处理（提取+封装双页签）
@@ -69,16 +73,18 @@ lib/
 │   ├── mkvtoolnix/                   # mkvmerge/mkvextract 封装（轨道提取/封装）
 │   ├── ai/                           # OpenAI 兼容 API 批量翻译（30 cue/批、
 │   │                                 #   重试、checkpoint 断点续传、润色）
-│   ├── whisper/                      # Whisper CLI 封装（双后端探测、GPU 检测、
+│   ├── whisper/                      # Whisper CLI 封装（三后端探测、GPU 检测、
 │   │                                 #   VAD、{episode} 模板、实时输出）
 │   ├── subtitle/                     # 解析/转换/写出/编码检测（Isolate 并行）
 │   ├── queue_service.dart            # 双车道调度（网络 ∥ 本地，车道内串行）
 │   ├── task_runner.dart              # 各任务类型 → 具体服务的分发执行
+│   ├── watch_folder_service.dart     # 监视文件夹无人值守流水线（配对即烧录）
+│   ├── tray_service.dart             # 系统托盘（显示主窗 / 暂停队列 / 退出）
 │   └── storage_service.dart          # Hive：历史/预设/设置
 └── widgets/                          # 通用组件 + 播放器面板（样式/列表/信息/控制）
 ```
 
-`test/`（33 文件，3,200+ 行）：服务层单测（翻译批次/断点续传/Whisper 参数/
+`test/`（45 文件，273 用例）：服务层单测（翻译批次/断点续传/Whisper 参数/
 队列调度/字幕解析编码）+ 页面布局回归（800×600/1024×700/1280×800 三档无溢出）。
 
 ## 快速开始
@@ -99,7 +105,7 @@ flutter build windows                  # 打包 Release
 
 # 3. 质量门禁
 dart analyze                           # 当前 0 issues
-flutter test                           # 当前 192/192
+flutter test                           # 当前 273/273
 ```
 
 > - 仓库不含 `resources/ffmpeg/*.exe`（单文件 185MB 超 GitHub 100MB 限制），按上文自行放置或走系统 PATH。
@@ -143,9 +149,9 @@ flutter test                           # 当前 192/192
 ## 路线图
 
 维护与更新计划见 [docs/ROADMAP.md](docs/ROADMAP.md)：
-v1.2.x（Whisper 检测缓存、依赖升级）→ v1.3（术语表旁车文件、whisper.cpp 实验
-后端、大版本依赖迁移）→ v1.5（安装包、自动更新、CI）→ v2.0（监视文件夹、托盘、
-多语言界面）。
+v1.0~v1.3 与 v2.0（监视文件夹、托盘、多语言界面）已全部落地；下一步 v1.5
+发布就绪（安装包、自动更新、CI、崩溃日志、隐私声明），期间多语言按页面增量
+迁移、whisper.cpp 验证转正。
 
 ## License
 
