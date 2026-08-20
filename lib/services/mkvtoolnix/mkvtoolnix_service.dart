@@ -165,6 +165,9 @@ class MkvToolNixService {
   String? get sourceLabel => _sourceLabel;
   String? get error => _error;
 
+  /// 当前使用的 mkvmerge 完整路径（PATH 命中时为可执行名；不可用为 null）。
+  String? get mkvmergePath => _available ? _mkvmergeBin : null;
+
   // ───────────────────────── 定位 / 检测 ─────────────────────────
 
   /// 检测 MKVToolNix（幂等）。设置页修改目录后调 [configure] 重检。

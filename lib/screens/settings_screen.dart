@@ -7,7 +7,6 @@ import 'package:path_provider/path_provider.dart';
 import '../core/theme.dart';
 import '../core/utils/filename_template.dart';
 import '../core/utils/reveal_file.dart';
-import '../l10n/app_localizations.dart';
 import '../providers/app_providers.dart';
 import '../services/file_service.dart';
 import '../services/ffmpeg/ffmpeg_service.dart';
@@ -383,8 +382,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         KeyedSubtree(key: _groupKeys[g], child: child);
     return [
       groupHead(_Group.appearance, _themeSection(settings, scheme)),
-      const SizedBox(height: 12),
-      _languageSection(settings),
       const SizedBox(height: 24),
       groupHead(_Group.output, _outputSection(settings)),
       const SizedBox(height: 24),
@@ -468,48 +465,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  /// 语言（v2.0 多语言）：跟随系统 / 中文 / English，切换即时生效。
-  Widget _languageSection(SettingsProvider settings) {
-    final l10n = AppLocalizations.of(context);
-    final scheme = Theme.of(context).colorScheme;
-    return SectionCard(
-      title: l10n.settingsLanguageTitle,
-      icon: Icons.language_outlined,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SegmentedButton<String>(
-            segments: [
-              ButtonSegment(
-                value: 'system',
-                label: Text(l10n.settingsLanguageSystem),
-              ),
-              ButtonSegment(
-                value: 'zh',
-                label: Text(l10n.settingsLanguageZh),
-              ),
-              ButtonSegment(
-                value: 'en',
-                label: Text(l10n.settingsLanguageEn),
-              ),
-            ],
-            selected: {settings.localeMode},
-            showSelectedIcon: false,
-            onSelectionChanged: (s) =>
-                ref.read(settingsProvider).setLocaleMode(s.first),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            l10n.settingsLanguageHint,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
-          ),
-        ],
-      ),
-    );
-  }
-
   /// 左侧锚点导航：点击跳转到对应分组，当前分组高亮。
   Widget _navPanel(ColorScheme scheme) {
     return Column(
@@ -573,8 +528,33 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (next != _active) setState(() => _active = next);
   }
 
+  /// 依赖检测成功时的路径展示行（等宽字体 + 可选中复制）。
+  Widget _pathLine(String path, ColorScheme scheme) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.folder_open, size: 14, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 6),
+          Expanded(
+            child: SelectableText(
+              path,
+              style: TextStyle(
+                fontSize: 12,
+                fontFamily: 'Consolas',
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// FFmpeg 区块（烧录 / 转码后端）。
   Widget _ffmpegSection(SettingsProvider settings, ColorScheme scheme) {
+    final ffmpegPath = FfmpegService.instance.runner.resolvedBinPath;
     return SectionCard(
       title: 'FFmpeg 路径',
       icon: Icons.terminal_outlined,
@@ -593,9 +573,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
               ),
             )
-          else if (settings.ffmpegVersion != null)
+          else if (settings.ffmpegVersion != null) ...[
             Padding(
-              padding: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.only(bottom: 6),
               child: Text(
                 '检测到 FFmpeg：${settings.ffmpegVersion}'
                 '（来源：${settings.ffmpegSource ?? '未知'}）',
@@ -605,6 +585,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
               ),
             ),
+            if (ffmpegPath != null) _pathLine(ffmpegPath, scheme),
+          ],
           _pathField(
             label: 'ffmpeg.exe',
             controller: _ffmpegCtrl,
@@ -698,15 +680,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 style: TextStyle(fontSize: 12, color: scheme.error),
               ),
             )
-          else if (svc.version != null)
+          else if (svc.version != null) ...[
             Padding(
-              padding: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.only(bottom: 6),
               child: Text(
                 '检测到 MKVToolNix v${svc.version}'
                 '（来源：${svc.sourceLabel ?? '未知'}）',
                 style: TextStyle(fontSize: 12, color: scheme.primary),
               ),
             ),
+            if (svc.mkvmergePath != null) _pathLine(svc.mkvmergePath!, scheme),
+          ],
           _pathField(
             label: 'MKVToolNix 目录',
             controller: _mkvDirCtrl,
@@ -781,15 +765,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 style: TextStyle(fontSize: 12, color: scheme.error),
               ),
             )
-          else if (available)
+          else if (available) ...[
             Padding(
-              padding: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.only(bottom: 6),
               child: Text(
                 '检测到 Whisper（来源：${svc.sourceLabel ?? '未知'}，'
                 '后端：${svc.backend?.label ?? '未知'}）',
                 style: TextStyle(fontSize: 12, color: scheme.primary),
               ),
             ),
+            if (svc.commandLine != null) _pathLine(svc.commandLine!, scheme),
+          ],
           _pathField(
             label: 'Whisper 路径',
             controller: _whisperPathCtrl,

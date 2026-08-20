@@ -1,8 +1,8 @@
-# Subtitle Studio Pro —— 优化与更新计划
+﻿# Subtitle Studio Pro —— 优化与更新计划
 
-> 更新：2026-08-20。v1.3（深化与债务清理）已全部完成：术语表旁车 / 自定义润色指令 / whisper.cpp 实验后端 / 大版本依赖迁移（file_picker 12、share_plus 13、window_manager 0.5、riverpod 3，连带 desktop_drop 0.7、media_kit 1.2+）。v2.0（自动化与生态）已落地：监视文件夹 / 系统托盘 / 多语言基础设施与语言切换。本文档反映当前现状与后续路线。
+> 更新：2026-08-20。v1.3（深化与债务清理）、v1.5（发布就绪）已全部完成：术语表旁车 / 自定义润色指令 / whisper.cpp 实验后端 / 大版本依赖迁移；安装包（Inno Setup + 文件关联）/ 自动更新（GitHub Releases 启动检查 + 一键升级）/ CI 流水线 / 崩溃与日志 / 发布文档（用户手册 + 隐私声明）。v2.0 自动化部分已落地：监视文件夹、系统托盘；多语言已按产品决策**回退为纯中文界面**（v2.0 发布前移除 l10n 体系）。本文档反映当前现状与后续路线。
 >
-> 当前质量基线（2026-08-20 复核）：`dart analyze` 零问题，`flutter test` 273/273（45 个测试文件）。下一步主线：v1.5 发布就绪。
+> 当前质量基线（2026-08-20 复核）：`dart analyze` 零问题，`flutter test` 311/311。
 
 
 
@@ -19,13 +19,13 @@
 
 ## 六、v1.5 —— 发布就绪（约 2~3 周）
 
-| # | 项 | 说明 | 工作量 |
-|---|---|---|---|
-| 1 | **安装包** | Inno Setup 或 MSIX：应用图标、开始菜单、文件关联（.srt/.ass）；可选捆绑 FFmpeg 便携版（解压即用） | 中 |
-| 2 | **自动更新** | GitHub Releases + 启动检查 + 一键升级（差量可选，先做全量替换） | 中 |
-| 3 | **CI 流水线** | GitHub Actions windows-latest：`flutter analyze` + `flutter test` + release 构建产物；PR 门禁（依赖 v1.2.x 的 git 仓库） | 中 |
-| 4 | **崩溃与日志** | `FlutterError.onError` + 未捕获异常落盘；结构化日志（JSON）+ 轮转；设置页「导出调试包」一键打包日志与配置（脱敏 API Key） | 中 |
-| 5 | **发布文档** | 用户手册（各功能页截图 + 常见问题）、隐私声明（哪些数据外发：仅 AI 翻译字幕文本） | 小 |
+| # | 项 | 说明 | 工作量 | 状态 |
+|---|---|---|---|---|
+| 1 | **安装包** | Inno Setup 或 MSIX：应用图标、开始菜单、文件关联（.srt/.ass）；可选捆绑 FFmpeg 便携版（解压即用） | 中 | ✅ 完成（Inno Setup 按用户安装；.srt/.ass/.ssa/.vtt 关联 + argv 启动播种字幕库；CI tag 构建产物） |
+| 2 | **自动更新** | GitHub Releases + 启动检查 + 一键升级（差量可选，先做全量替换） | 中 | ✅ 完成（UpdateService + 启动静默检查 → 首页横幅；关于页手动检查 / Release Notes / 下载进度 / /SILENT 静默升级） |
+| 3 | **CI 流水线** | GitHub Actions windows-latest：`flutter analyze` + `flutter test` + release 构建产物；PR 门禁（依赖 v1.2.x 的 git 仓库） | 中 | ✅ 完成（analyze + test + tag 触发 Inno Setup 构建发布；runner 装 MKVToolNix） |
+| 4 | **崩溃与日志** | `FlutterError.onError` + 未捕获异常落盘；结构化日志（JSON）+ 轮转；设置页「导出调试包」一键打包日志与配置（脱敏 API Key） | 中 | ✅ 完成（CrashGuard + LogFileStore JSON Lines 轮转 + DebugBundle 脱敏导出） |
+| 5 | **发布文档** | 用户手册（各功能页截图 + 常见问题）、隐私声明（哪些数据外发：仅 AI 翻译字幕文本） | 小 | ✅ 完成（docs/USER_MANUAL.md + docs/PRIVACY.md；截图待发布前补） |
 
 ---
 
@@ -35,7 +35,7 @@
 |---|---|---|---|---|
 | 1 | **监视文件夹** | 指定目录 + 规则（如「新视频 + 同名字幕 → 自动烧录到输出目录」），无人值守流水线 | 大 | ✅ 完成（`WatchFolderService`：顶层配对 / 静默期稳定检测 / 存量不处理 / 输出已存在跨重启防重；设置页「自动化」开关 + 双目录配置，即时启停） |
 | 2 | **系统托盘** | 最小化常驻，任务后台继续；托盘菜单：显示主窗 / 暂停队列 / 退出 | 中 | ✅ 完成（tray_manager；关闭最小化到托盘可关；队列暂停/恢复贯通主界面与托盘） |
-| 3 | **多语言界面** | 中/英文案抽离（flutter ARB），面向海外字幕组 | 中 | ✅ 基础设施完成（gen-l10n zh/en 双 ARB、跟随系统/中文/English 即时切换、托盘等无 context 场景经 L10nHolder）；导航壳/托盘/设置语言卡已抽离，其余功能页按同模式增量迁移 |
+| 3 | **多语言界面** | 中/英文案抽离（flutter ARB），面向海外字幕组 | 中 | ↩️ 已回退（v1.5 发布前按产品决策移除 l10n 体系：删除 ARB / 生成文件 / L10nHolder / 语言设置，界面回归纯中文；理由：目标用户以国内字幕组为主，维护双语文案成本高于收益。如需恢复可从 git 历史找回） |
 
 ---
 
@@ -56,7 +56,7 @@
 |---|---|---|
 | ~~代码无版本控制~~（已解决） | 已不影响 | ✅ v1.2.x #1 完成：git 仓库已建立并推送 GitHub；v1.5 的 CI 可直接基于其落地 |
 | openai-whisper 检测慢（torch 导入 10~30s） | 首次进入 Whisper 页体验差 | ✅ 已实现：检测结果持久化缓存 + 启动后台静默复检，指纹失效自动清缓存转不可用 |
-| AI 翻译文本外发 | 隐私合规 | 翻译页已有隐私提示；v1.5 正式隐私声明（待做） |
+| AI 翻译文本外发 | 隐私合规 | ✅ v1.5 已发布隐私声明（docs/PRIVACY.md）：外发范围（仅字幕文本 + 术语表 → 用户自配 API）、本地存储、调试包脱敏全部成文 |
 | 串行队列长任务阻塞 | 批量大任务等待久 | v1.1 已网络/本地双车道并行；v2.0 托盘 + 通知缓解感知 |
 | 停维护依赖（flutter_big5 / js） | 安全补丁缺失、未来 SDK 升级断供 | ✅ flutter_big5 已内置 vendor（`lib/services/subtitle/big5/`，BSD）；js 为间接依赖，随 SDK 升级观察 |
 | Flutter SDK 含空格路径（开发机） | `flutter test`/`dart run` 间歇损坏 | 文档记录 workaround；CI 使用标准路径消除 |

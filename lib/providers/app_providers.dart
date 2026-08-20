@@ -37,7 +37,6 @@ class SettingsProvider extends ChangeNotifier {
   static const _kGlossary = 'ai_glossary';
   static const _kPolishCustomRules = 'ai_polish_custom_rules';
   static const _kCloseToTray = 'close_to_tray';
-  static const _kLocaleMode = 'locale_mode';
   static const _kWatchEnabled = 'watch_enabled';
   static const _kWatchDir = 'watch_dir';
   static const _kWatchOutputDir = 'watch_output_dir';
@@ -65,9 +64,6 @@ class SettingsProvider extends ChangeNotifier {
   /// 关闭窗口时最小化到系统托盘（v2.0，默认开启；关闭则直接退出）
   bool _closeToTray = true;
 
-  /// 界面语言（v2.0 多语言）：'system'（跟随系统）/ 'zh' / 'en'。
-  String _localeMode = 'system';
-
   /// 监视文件夹（v2.0 无人值守流水线）：开关 / 监视目录 / 输出目录
   /// （输出目录空 = <监视目录>\burned）。
   bool _watchEnabled = false;
@@ -94,16 +90,6 @@ class SettingsProvider extends ChangeNotifier {
   String get polishCustomRules => _polishCustomRules;
 
   bool get closeToTray => _closeToTray;
-
-  /// 当前语言模式（system / zh / en）。
-  String get localeMode => _localeMode;
-
-  /// MaterialApp locale 覆盖：system 返回 null（按平台解析）。
-  Locale? get localeOverride => switch (_localeMode) {
-        'zh' => const Locale('zh'),
-        'en' => const Locale('en'),
-        _ => null,
-      };
 
   bool get watchEnabled => _watchEnabled;
 
@@ -156,9 +142,6 @@ class SettingsProvider extends ChangeNotifier {
       _kCloseToTray,
       fallback: 'true',
     ) != 'false';
-    final localeRaw =
-        StorageService.instance.getSetting(_kLocaleMode, fallback: 'system');
-    _localeMode = {'system', 'zh', 'en'}.contains(localeRaw) ? localeRaw : 'system';
     _watchEnabled =
         StorageService.instance.getSetting(_kWatchEnabled) == 'true';
     _watchDir = StorageService.instance.getSetting(_kWatchDir);
@@ -255,14 +238,6 @@ class SettingsProvider extends ChangeNotifier {
     _closeToTray = value;
     notifyListeners();
     await StorageService.instance.setSetting(_kCloseToTray, '$value');
-  }
-
-  /// 切换界面语言（system / zh / en），MaterialApp 即时重建生效。
-  Future<void> setLocaleMode(String mode) async {
-    if (_localeMode == mode) return;
-    _localeMode = mode;
-    notifyListeners();
-    await StorageService.instance.setSetting(_kLocaleMode, mode);
   }
 
   /// 保存监视文件夹配置（v2.0）；调用方随后需触发

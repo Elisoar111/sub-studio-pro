@@ -2,7 +2,6 @@ import 'package:flutter/foundation.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
-import '../l10n/l10n.dart';
 import 'queue_service.dart';
 
 /// 系统托盘常驻服务（v2.0）：
@@ -38,19 +37,18 @@ class TrayService with TrayListener {
     QueueService.instance.addListener(_onQueueChanged);
   }
 
-  /// 托盘菜单（[paused] 驱动暂停/恢复项 label，文案跟随当前语言）。
+  /// 托盘菜单（[paused] 驱动暂停/恢复项 label）。
   static Menu buildMenu({required bool paused}) {
-    final l10n = L10nHolder.current;
     return Menu(
       items: [
-        MenuItem(key: kShow, label: l10n.trayShow),
+        MenuItem(key: kShow, label: '显示主窗'),
         MenuItem.separator(),
         MenuItem(
           key: kTogglePause,
-          label: paused ? l10n.trayResumeQueue : l10n.trayPauseQueue,
+          label: paused ? '恢复队列' : '暂停队列',
         ),
         MenuItem.separator(),
-        MenuItem(key: kExit, label: l10n.trayExit),
+        MenuItem(key: kExit, label: '退出'),
       ],
     );
   }
@@ -80,12 +78,6 @@ class TrayService with TrayListener {
     if (paused == _menuPaused || !_initialized) return;
     _menuPaused = paused;
     trayManager.setContextMenu(buildMenu(paused: paused));
-  }
-
-  /// 语言切换后刷新菜单文案（未初始化 / 非桌面环境时忽略）。
-  Future<void> refreshMenu() async {
-    if (!_initialized) return;
-    await trayManager.setContextMenu(buildMenu(paused: _menuPaused));
   }
 
   Future<void> _showWindow() async {

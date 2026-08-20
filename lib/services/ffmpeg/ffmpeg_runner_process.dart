@@ -27,6 +27,7 @@ class FfmpegProcessRunner implements FfmpegRunner {
   String? _version;
   String? _initError;
   String? _sourceLabel;
+  String? _resolvedPath;
 
   /// 捆绑 FFmpeg 目录（发布时随 exe 分发：<exe目录>/resources/ffmpeg/）。
   Directory? _bundledDir;
@@ -84,6 +85,10 @@ class FfmpegProcessRunner implements FfmpegRunner {
   @override
   String? get sourceLabel => _sourceLabel;
 
+  /// 当前生效的 ffmpeg 完整路径（PATH 命中时经 where 解析；不可用为 null）。
+  @override
+  String? get resolvedBinPath => _available ? _resolvedPath : null;
+
   /// 配置自定义可执行文件路径（设置页保存后调用）。
   /// 传 null / 空串表示回退到「捆绑版 → 系统 PATH」。配置后需再次调用 [init] 重新检测。
   void configure({String? ffmpegPath, String? ffprobePath}) {
@@ -94,6 +99,7 @@ class FfmpegProcessRunner implements FfmpegRunner {
     _initError = null;
     _version = null;
     _sourceLabel = null;
+    _resolvedPath = null;
     // 换可执行文件后编码器列表可能不同（如指向带 NVENC 的构建），
     // 旧缓存（可能是在不可用状态下缓存的空集合）必须失效
     _encodersCache = null;
@@ -112,6 +118,7 @@ class FfmpegProcessRunner implements FfmpegRunner {
           : _bundledFfmpeg != null
               ? '捆绑版'
               : '系统 PATH';
+      _resolvedPath = _customFfmpeg ?? _bundledFfmpeg ?? await _resolveFromPath();
       Logger.instance.log(
           '检测到 FFmpeg $_version（来源：$_sourceLabel）', tag: 'FFMPEG');
     } catch (e) {
@@ -143,6 +150,24 @@ class FfmpegProcessRunner implements FfmpegRunner {
     final first = (r.stdout as String).split('\n').first.trim();
     final m = RegExp(r'ffmpeg version (\S+)').firstMatch(first);
     return m?.group(1) ?? first;
+  }
+
+  /// PATH 命中时解析完整路径（where.exe）；解析失败回退可执行名。
+  Future<String> _resolveFromPath() async {
+    final bin = Platform.isWindows ? 'ffmpeg.exe' : 'ffmpeg';
+    try {
+      final r = await Process.run(
+        'where.exe',
+        [bin],
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      if (r.exitCode == 0) {
+        final first = (r.stdout as String).split('\n').first.trim();
+        if (first.isNotEmpty) return first;
+      }
+    } catch (_) {}
+    return bin;
   }
 
   // ───────────────────────── 探测 ─────────────────────────

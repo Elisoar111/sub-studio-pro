@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:subtitle_studio_pro/l10n/app_localizations.dart';
 import 'package:subtitle_studio_pro/providers/app_providers.dart';
 import 'package:subtitle_studio_pro/screens/settings_screen.dart';
 import 'package:subtitle_studio_pro/services/ffmpeg/ffmpeg_service.dart';
@@ -27,10 +26,6 @@ void main() {
     await tester.pumpWidget(
       const ProviderScope(
         child: MaterialApp(
-          // v2.0 起设置页语言卡片走 AppLocalizations，测试环境固定中文
-          localizationsDelegates: AppLocalizations.localizationsDelegates,
-          supportedLocales: AppLocalizations.supportedLocales,
-          locale: Locale('zh'),
           home: SettingsScreen(),
         ),
       ),

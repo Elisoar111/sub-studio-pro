@@ -19,6 +19,7 @@ import 'services/notification_service.dart';
 import 'services/queue_service.dart';
 import 'services/storage_service.dart';
 import 'services/tray_service.dart';
+import 'services/update/update_service.dart';
 import 'services/watch_folder_service.dart';
 import 'services/whisper/whisper_service.dart';
 
@@ -132,6 +133,10 @@ Future<void> main(List<String> args) async {
   // 8) 监视文件夹（v2.0 无人值守流水线）：按已保存配置恢复监视
   //    （未启用 / 未配置目录时为幂等空操作）
   WatchFolderService.instance.syncFromSettings();
+
+  // 9) 启动检查更新（v1.5-2）：后台静默查 GitHub Releases，发现新版本
+  //    时首页横幅提示；无网络 / 失败静默忽略，不阻塞启动
+  unawaited(checkForUpdatesSilently());
 
   runApp(ProviderScope(
     overrides: [

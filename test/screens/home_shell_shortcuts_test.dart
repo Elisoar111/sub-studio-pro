@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:subtitle_studio_pro/l10n/app_localizations.dart';
 import 'package:subtitle_studio_pro/screens/burn_screen.dart';
 import 'package:subtitle_studio_pro/screens/home_shell.dart';
 import 'package:subtitle_studio_pro/screens/task_queue_screen.dart';
@@ -50,10 +49,6 @@ void main() {
     await tester.pumpWidget(
       const ProviderScope(
         child: MaterialApp(
-          // v2.0 起导航标签走 AppLocalizations，测试环境固定中文
-          localizationsDelegates: AppLocalizations.localizationsDelegates,
-          supportedLocales: AppLocalizations.supportedLocales,
-          locale: Locale('zh'),
           home: HomeShell(),
         ),
       ),

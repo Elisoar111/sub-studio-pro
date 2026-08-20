@@ -163,6 +163,11 @@ class WhisperService {
   /// 当前生效后端（null = 尚未检测 / 不可用）。
   WhisperBackend? get backend => _activeBackend;
 
+  /// 当前使用的转写命令行（如 `C:\...\whisper.exe` 或 `python -m whisper`）；
+  /// 不可用时为 null。
+  String? get commandLine =>
+      _available && _whisperCmd != null ? '$_whisperCmd ${_baseArgs.join(' ')}'.trim() : null;
+
   // ───────────────────────── 定位 / 检测 ─────────────────────────
 
   /// `--help` 探测注入缝（widget/单测避免真实 torch 导入子进程）。

@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:subtitle_studio_pro/l10n/app_localizations.dart';
 import 'package:subtitle_studio_pro/providers/app_providers.dart';
 import 'package:subtitle_studio_pro/screens/home_shell.dart';
 
@@ -38,9 +37,6 @@ void main() {
           startupSubtitleFilesProvider.overrideWith((ref) => [srt.path]),
         ],
         child: const MaterialApp(
-          localizationsDelegates: AppLocalizations.localizationsDelegates,
-          supportedLocales: AppLocalizations.supportedLocales,
-          locale: Locale('zh'),
           home: HomeShell(),
         ),
       ),

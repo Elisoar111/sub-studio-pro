@@ -107,6 +107,9 @@ abstract class FfmpegRunner {
   /// FFmpeg 来源说明（捆绑版 / 自定义路径 / 系统 PATH）。
   String? get sourceLabel => null;
 
+  /// 当前生效的 ffmpeg 可执行文件完整路径（不可用时为 null）。
+  String? get resolvedBinPath => null;
+
   /// FFmpeg 支持的编码器名集合（如 h264_nvenc），探测并缓存。
   Future<Set<String>> availableEncoders() async => const {};
 }

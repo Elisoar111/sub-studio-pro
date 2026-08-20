@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../l10n/app_localizations.dart';
 import '../providers/app_providers.dart';
 import 'about_screen.dart';
 import 'burn_screen.dart';
@@ -41,18 +40,18 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     false,
   ];
 
-  /// 导航目的地（图标 + 当前语言 label）。
-  static List<(IconData, String)> _destinations(AppLocalizations l10n) => [
-        (Icons.dashboard_outlined, l10n.navHome),
-        (Icons.closed_caption_outlined, l10n.navLibrary),
-        (Icons.theaters, l10n.navBurn),
-        (Icons.swap_vert_circle_outlined, l10n.navTracks),
-        (Icons.compress, l10n.navTranscode),
-        (Icons.translate, l10n.navTranslate),
-        (Icons.mic_none, l10n.navWhisper),
-        (Icons.queue, l10n.navQueue),
-        (Icons.history, l10n.navHistory),
-      ];
+  /// 导航目的地（图标 + label）。
+  static const List<(IconData, String)> _destinations = [
+    (Icons.dashboard_outlined, '首页'),
+    (Icons.closed_caption_outlined, '字幕库'),
+    (Icons.theaters, '字幕烧录'),
+    (Icons.swap_vert_circle_outlined, '轨道处理'),
+    (Icons.compress, '转码压缩'),
+    (Icons.translate, 'AI 翻译'),
+    (Icons.mic_none, 'Whisper字幕'),
+    (Icons.queue, '任务队列'),
+    (Icons.history, '历史记录'),
+  ];
 
   /// 任务队列在侧边栏中的索引（Ctrl+Q 直达）。
   static const _queueIndex = 7;
@@ -106,8 +105,6 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final l10n = AppLocalizations.of(context);
-    final destinations = _destinations(l10n);
 
     // 全局快捷键：Ctrl+1..9 直达功能页、Ctrl+Q 打开任务队列。
     // Focus(autofocus) 保证无控件聚焦时快捷键仍生效；焦点进入页面内
@@ -185,7 +182,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           IconButton(
-                            tooltip: l10n.tooltipSettings,
+                            tooltip: '设置',
                             icon: const Icon(Icons.settings_outlined),
                             onPressed: () => Navigator.of(context).push(
                               MaterialPageRoute(
@@ -193,7 +190,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
                             ),
                           ),
                           IconButton(
-                            tooltip: l10n.tooltipAbout,
+                            tooltip: '关于',
                             icon: const Icon(Icons.info_outline),
                             onPressed: () => Navigator.of(context).push(
                               MaterialPageRoute(
@@ -206,7 +203,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
                   ),
                 ),
                 destinations: [
-                  for (final (icon, label) in destinations)
+                  for (final (icon, label) in _destinations)
                     NavigationRailDestination(
                       icon: Icon(icon),
                       selectedIcon: Icon(icon, color: scheme.primary),

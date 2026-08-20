@@ -10,9 +10,6 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  flutter_localizations:
-    sdk: flutter
-  intl: any
 
   # ── 状态管理：Riverpod（编译期安全、异步支持好、无需手动 dispose）
   flutter_riverpod: ^3.4.2
@@ -67,7 +64,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  generate: true
 
   # 系统托盘图标（tray_manager 从 flutter_assets 解析）
   assets:

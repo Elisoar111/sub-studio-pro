@@ -4,11 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/queue_task.dart';
 import '../providers/app_providers.dart';
 import '../services/mkvtoolnix/mkvtoolnix_service.dart';
+import '../services/update/update_service.dart';
 import '../widgets/feature_grid.dart';
 import '../widgets/progress_panel.dart';
+import 'about_screen.dart';
 import 'player_screen.dart';
 
-/// 首页概览（NavigationRail 的第 0 项）：功能入口网格 + FFmpeg 状态 + 运行中任务。
+/// 首页概览（NavigationRail 的第 0 项）：功能入口网格 + 环境状态 + 运行中任务。
 ///
 /// [onNavigate]：切换到主导航的某个功能页（由 HomeShell 注入）。
 class HomeScreen extends ConsumerWidget {
@@ -24,43 +26,19 @@ class HomeScreen extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Subtitle Studio Pro',
-                        style: Theme.of(context)
-                            .textTheme
-                            .headlineSmall
-                            ?.copyWith(fontWeight: FontWeight.w700)),
-                    const SizedBox(height: 4),
-                    Text('字幕组工作流：转换 · 烧录 · 提取 · 转码 · 播放预览',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color:
-                                Theme.of(context).colorScheme.onSurfaceVariant)),
-                  ],
-                ),
-              ),
-              Consumer(
-                builder: (context, ref, _) {
-                  final ok = ref.watch(settingsProvider).ffmpegReady;
-                  if (ok) {
-                    return const Chip(
-                      avatar: Icon(Icons.check_circle,
-                          size: 16, color: Colors.green),
-                      label: Text('FFmpeg 就绪',
-                          style: TextStyle(fontSize: 11)),
-                      visualDensity: VisualDensity.compact,
-                    );
-                  }
-                  return const SizedBox.shrink();
-                },
-              ),
-            ],
-          ),
+          Text('Subtitle Studio Pro',
+              style: Theme.of(context)
+                  .textTheme
+                  .headlineSmall
+                  ?.copyWith(fontWeight: FontWeight.w700)),
           const SizedBox(height: 16),
+          // 启动检查发现新版本（v1.5-2）：可关闭提示条，点击进关于页升级
+          ValueListenableBuilder<UpdateInfo?>(
+            valueListenable: startupUpdate,
+            builder: (context, info, _) => info == null
+                ? const SizedBox.shrink()
+                : _updateBanner(context, info),
+          ),
           if (!settings.ffmpegReady) _ffmpegWarning(context),
           // 首页常驻 HomeShell（IndexedStack），设置页导入工具后须靠
           // notifier 通知横幅消失，不能静态读取 isAvailable
@@ -158,6 +136,44 @@ class HomeScreen extends ConsumerWidget {
           const SizedBox(height: 8),
           const _QueuePanel(),
         ],
+      ),
+    );
+  }
+
+  /// 新版本提示条（v1.5-2 启动检查）：点击进关于页查看说明并升级；
+  /// 关闭按钮仅隐藏本次会话的提示。
+  Widget _updateBanner(BuildContext context, UpdateInfo info) {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      color: scheme.primaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+        child: Row(
+          children: [
+            Icon(Icons.new_releases_outlined,
+                size: 18, color: scheme.onPrimaryContainer),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                '发现新版本 v${info.version}，点击查看更新内容',
+                style: TextStyle(
+                    fontSize: 13, color: scheme.onPrimaryContainer),
+              ),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const AboutScreen()),
+              ),
+              child: const Text('查看'),
+            ),
+            IconButton(
+              tooltip: '本次不再提示',
+              icon: Icon(Icons.close,
+                  size: 16, color: scheme.onPrimaryContainer),
+              onPressed: () => startupUpdate.value = null,
+            ),
+          ],
+        ),
       ),
     );
   }

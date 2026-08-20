@@ -1,90 +1,132 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../core/constants.dart';
+import '../services/tray_service.dart';
+import '../services/update/update_service.dart';
 
-/// 关于页：项目定位、核心功能、技术栈与格式支持的完整介绍。
+/// 关于页（v1.5 重设计）：品牌横幅 + 版本与更新入口 + 能力速览 +
+/// 技术栈与格式支持。
 ///
-/// 排版原则（工具型产品界面）：不用卡片堆砌，用留白、分组标题、
-/// 分隔线与行式列表组织层级；产品名是全页最响的文字。
-class AboutScreen extends StatelessWidget {
-  const AboutScreen({super.key});
+/// 排版原则：品牌横幅是全页唯一的视觉锚点（渐变底 + 大图标 + 产品名），
+/// 其余内容用分组标题、细分隔线与留白组织层级；「检查更新」是唯一
+/// 主动作。更新流程：GitHub Releases 检查 → 下载安装包 → 静默升级
+/// 并退出本应用。
+class AboutScreen extends StatefulWidget {
+  const AboutScreen({super.key, this.updateService});
 
-  // ───────────────────────── 功能条目数据 ─────────────────────────
+  /// 更新服务（测试注入 fake；默认单例走 GitHub API）。
+  final UpdateService? updateService;
 
-  static const _subtitleGroup = [
-    (
-      Icons.library_books_outlined,
-      '字幕库',
-      '集中导入与管理字幕：按时间轴排序、内容预览，'
-          'SRT / ASS / SSA / VTT / SUB 互转，'
-          'GBK / BIG5 编码自动检测并转 UTF-8',
-    ),
-    (
-      Icons.local_fire_department_outlined,
-      '字幕烧录',
-      'FFmpeg + libass 硬字幕压制：完整保留 ASS 样式与特效，'
-          '或按预设统一观感（白字黑边 / 经典黄字 / 大字描边）',
-    ),
-    (
-      Icons.translate,
-      'AI 翻译',
-      '接入任意 OpenAI 兼容 API（OpenAI / DeepSeek / 中转）：'
-          '只翻译文本，时间轴与样式标签原样不动，'
-          '输出「源文件名_语言码」（如 demo_en.srt），'
-          '可选双语内容合并「源文件名_mixed」',
-    ),
-    (
-      Icons.mic_none,
-      'Whisper 字幕',
-      '本地 openai-whisper 批量转写视频 / 音频为字幕：'
-          '转写结果实时输出、可随时回看，模型可预下载管理，'
-          '输出「源文件名_模型名」',
-    ),
-    (
-      Icons.swap_vert_circle_outlined,
-      '轨道处理',
-      'MKVToolNix 工具链（交互对齐 gMKVExtractGUI v2.15）：'
-          '提取 MKV 的视频 / 音频 / 字幕 / 章节 / 字体附件，'
-          '反向把字幕、音轨、字体封装为标准 MKV，轨道可勾选删减',
-    ),
-  ];
+  @override
+  State<AboutScreen> createState() => _AboutScreenState();
+}
 
-  static const _videoGroup = [
-    (
-      Icons.compress,
-      '转码压缩',
-      'FFmpeg 转封装 / 转码：分辨率、码率、CRF、x264 预设、'
-          '帧率、音轨编码全部可调，一键压缩'
-    ),
-    (
-      Icons.play_circle_outline,
-      '视频预览',
-      '内置播放器：播放列表、音轨 / 字幕轨切换、'
-          '字幕样式实时调整、倍速播放',
-    ),
-  ];
+/// 更新流程阶段。
+enum _UpdatePhase { idle, checking, upToDate, available, downloading, failed }
 
-  static const _taskGroup = [
-    (
-      Icons.queue,
-      '任务队列',
-      '所有功能任务串行执行：实时进度与日志、可取消、失败可重试',
-    ),
-    (
-      Icons.history,
-      '历史记录',
-      '自动保存每次任务的完整参数与产物路径，'
-          '可回溯重跑、在文件资源管理器中定位',
-    ),
+class _AboutScreenState extends State<AboutScreen> {
+  _UpdatePhase _phase = _UpdatePhase.idle;
+  UpdateInfo? _update;
+  double _progress = 0;
+  String? _error;
+
+  UpdateService get _svc => widget.updateService ?? UpdateService.instance;
+
+  // ───────────────────────── 数据 ─────────────────────────
+
+  static const _capabilities = [
+    (Icons.library_books_outlined, '字幕库', '导入排序预览，格式互转与编码检测'),
+    (Icons.local_fire_department_outlined, '字幕烧录', 'libass 硬字幕压制，保留 ASS 特效'),
+    (Icons.translate, 'AI 翻译', 'OpenAI 兼容 API，保留时间轴，可双语'),
+    (Icons.mic_none, 'Whisper 字幕', '本地语音转写，模型预下载管理'),
+    (Icons.swap_vert_circle_outlined, '轨道处理', 'MKV 提取与封装，对齐 gMKVExtractGUI'),
+    (Icons.compress, '转码压缩', '分辨率、码率、CRF 全参数可调'),
+    (Icons.play_circle_outline, '视频预览', '内置播放器，字幕样式实时调整'),
+    (Icons.queue, '任务队列', '双车道调度，实时进度可取消'),
+    (Icons.history, '历史记录', '参数与产物自动留痕，可回溯定位'),
   ];
 
   static const _stack = [
-    ('Flutter', 'Windows 桌面应用框架；Material 3 + 动态种子色主题（亮 / 暗 / 跟随系统）'),
+    ('Flutter', '桌面应用框架 · Material 3 · 亮 / 暗 / 跟随系统主题'),
     ('FFmpeg', '字幕烧录（libass 渲染 ASS 特效）与视频转码压缩'),
-    ('MKVToolNix', '轨道提取（mkvextract）与封装（mkvmerge）；支持导入应用内便携使用'),
-    ('openai-whisper', '本地语音识别转写（Python CLI，模型缓存在本机，不联网上传）'),
-    ('Hive', '任务历史与本机配置存储；API Key 仅保存在本机'),
+    ('MKVToolNix', '轨道提取（mkvextract）与封装（mkvmerge），支持应用内便携导入'),
+    ('Whisper', '本地语音识别转写（openai-whisper / faster-whisper / whisper.cpp 多后端）'),
+    ('Hive', '历史与配置的本机存储；API Key 与处理过程均不上传'),
   ];
+
+  // ───────────────────────── 更新流程 ─────────────────────────
+
+  Future<void> _checkUpdate() async {
+    setState(() {
+      _phase = _UpdatePhase.checking;
+      _error = null;
+    });
+    try {
+      final info =
+          await _svc.checkLatest(currentVersion: AppConstants.appVersion);
+      if (!mounted) return;
+      setState(() {
+        _update = info;
+        _phase =
+            info == null ? _UpdatePhase.upToDate : _UpdatePhase.available;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _phase = _UpdatePhase.failed;
+        _error = '检查更新失败：$e';
+      });
+    }
+  }
+
+  Future<void> _upgrade() async {
+    final info = _update;
+    final url = info?.setupUrl;
+    if (info == null || url == null) return;
+    setState(() {
+      _phase = _UpdatePhase.downloading;
+      _progress = 0;
+    });
+    try {
+      final dest =
+          '${Directory.systemTemp.path}${Platform.pathSeparator}'
+          'SubtitleStudioPro-${info.version}-setup.exe';
+      await _svc.downloadSetup(url, dest, onProgress: (p) {
+        if (mounted) setState(() => _progress = p);
+      });
+      await _svc.launchInstaller(dest);
+      // 安装程序已独立启动（/SILENT），退出本应用让位升级
+      await _exitApp();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _phase = _UpdatePhase.failed;
+        _error = '升级失败：$e';
+      });
+    }
+  }
+
+  Future<void> _exitApp() async {
+    try {
+      await TrayService.instance.shutdown();
+    } catch (_) {}
+    try {
+      await windowManager.destroy();
+    } catch (_) {}
+  }
+
+  Future<void> _openReleasePage() async {
+    final url = _update?.releaseUrl;
+    if (url == null || url.isEmpty) return;
+    try {
+      await Process.run('cmd', ['/c', 'start', '', url]);
+    } catch (_) {}
+  }
+
+  // ───────────────────────── 构建 ─────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -96,51 +138,54 @@ class AboutScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 28),
         children: [
-          // 入场：整页内容一次淡入 + 轻微上移，建立层级即可
-          TweenAnimationBuilder<double>(
-            tween: Tween(begin: 0, end: 1),
-            duration: const Duration(milliseconds: 380),
-            curve: Curves.easeOutCubic,
-            builder: (context, t, child) => Opacity(
-              opacity: t,
-              child: Transform.translate(
-                offset: Offset(0, 14 * (1 - t)),
-                child: child,
-              ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _brandHeader(scheme, text),
-                const SizedBox(height: 28),
-                _intro(text, scheme),
-                const SizedBox(height: 36),
-                _sectionTitle(context, '核心功能', '从字幕获取到成片压制的一条流水线'),
-                _groupHeader(context, '字幕工作流'),
-                ..._featureRows(_subtitleGroup, scheme),
-                _groupHeader(context, '视频处理'),
-                ..._featureRows(_videoGroup, scheme),
-                _groupHeader(context, '任务与记录'),
-                ..._featureRows(_taskGroup, scheme),
-                const SizedBox(height: 36),
-                _sectionTitle(context, '技术栈', '外部工具均可自定义路径，支持便携导入'),
-                ..._stackRows(scheme),
-                const SizedBox(height: 36),
-                _sectionTitle(context, '格式支持', '覆盖字幕组日常交付的主流容器与编码'),
-                _formatChips(scheme),
-                const SizedBox(height: 40),
-                Divider(color: scheme.outlineVariant.withValues(alpha: 0.6)),
-                const SizedBox(height: 16),
-                Center(
-                  child: Text(
-                    '${AppConstants.appName} v${AppConstants.appVersion} · '
-                    '为字幕组与个人压片工作流而生',
-                    style: text.bodySmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 820),
+              child: TweenAnimationBuilder<double>(
+                tween: Tween(begin: 0, end: 1),
+                duration: const Duration(milliseconds: 380),
+                curve: Curves.easeOutCubic,
+                builder: (context, t, child) => Opacity(
+                  opacity: t,
+                  child: Transform.translate(
+                    offset: Offset(0, 14 * (1 - t)),
+                    child: child,
                   ),
                 ),
-              ],
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _heroBand(scheme, text),
+                    _updatePanel(scheme, text),
+                    const SizedBox(height: 32),
+                    _intro(text, scheme),
+                    _sectionTitle(context, '核心能力',
+                        '从获取字幕到成片压制的完整流水线'),
+                    _capabilityGrid(scheme),
+                    const SizedBox(height: 32),
+                    _sectionTitle(context, '技术栈',
+                        '外部工具均可自定义路径，支持便携导入'),
+                    ..._stackRows(scheme),
+                    const SizedBox(height: 32),
+                    _sectionTitle(context, '格式支持',
+                        '覆盖字幕组日常交付的主流容器与编码'),
+                    _formatChips(scheme),
+                    const SizedBox(height: 36),
+                    Divider(
+                        color: scheme.outlineVariant.withValues(alpha: 0.6)),
+                    const SizedBox(height: 16),
+                    Center(
+                      child: Text(
+                        '${AppConstants.appName} v${AppConstants.appVersion} · '
+                        '为字幕组与个人压片工作流而生',
+                        style: text.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
         ],
@@ -148,69 +193,244 @@ class AboutScreen extends StatelessWidget {
     );
   }
 
-  // ───────────────────────── 品牌区（全页视觉锚点） ─────────────────────────
+  // ───────────────────────── 品牌横幅 ─────────────────────────
 
-  Widget _brandHeader(ColorScheme scheme, TextTheme text) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [scheme.primary, scheme.tertiary],
-            ),
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: scheme.primary.withValues(alpha: 0.35),
-                blurRadius: 18,
-                offset: const Offset(0, 5),
-              ),
-            ],
-          ),
-          child: const Icon(Icons.subtitles, size: 30, color: Colors.white),
+  Widget _heroBand(ColorScheme scheme, TextTheme text) {
+    return Container(
+      padding: const EdgeInsets.all(28),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [scheme.primary, scheme.tertiary],
         ),
-        const SizedBox(width: 18),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                AppConstants.appName,
-                style: text.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.5,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: scheme.primary.withValues(alpha: 0.3),
+            blurRadius: 24,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.18),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: const Icon(Icons.subtitles, size: 34, color: Colors.white),
+          ),
+          const SizedBox(width: 20),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  AppConstants.appName,
+                  style: text.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.5,
+                    color: Colors.white,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '字幕工作流一体化桌面工具',
-                style: text.bodyLarge?.copyWith(color: scheme.onSurfaceVariant),
-              ),
-            ],
-          ),
-        ),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-          decoration: BoxDecoration(
-            color: scheme.primaryContainer.withValues(alpha: 0.6),
-            borderRadius: BorderRadius.circular(999),
-          ),
-          child: Text(
-            'v${AppConstants.appVersion}',
-            style: text.labelMedium?.copyWith(
-              fontWeight: FontWeight.w600,
-              color: scheme.onPrimaryContainer,
-              fontFamily: 'Consolas',
+                const SizedBox(height: 4),
+                Text(
+                  '字幕工作流一体化桌面工具',
+                  style: text.bodyLarge
+                      ?.copyWith(color: Colors.white.withValues(alpha: 0.85)),
+                ),
+              ],
             ),
           ),
-        ),
-      ],
+          const SizedBox(width: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.18),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              'v${AppConstants.appVersion}',
+              style: text.labelLarge?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+                fontFamily: 'Consolas',
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
+
+  // ───────────────────────── 更新面板 ─────────────────────────
+
+  Widget _updatePanel(ColorScheme scheme, TextTheme text) {
+    final busy =
+        _phase == _UpdatePhase.checking || _phase == _UpdatePhase.downloading;
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '版本与更新',
+                  style: text.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w600),
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: busy ? null : _checkUpdate,
+                icon: busy
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh, size: 16),
+                label: Text(
+                  _phase == _UpdatePhase.checking
+                      ? '检查中…'
+                      : _phase == _UpdatePhase.downloading
+                          ? '下载中…'
+                          : '检查更新',
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ..._updateStatusBody(scheme, text),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _updateStatusBody(ColorScheme scheme, TextTheme text) {
+    switch (_phase) {
+      case _UpdatePhase.idle:
+        return [
+          Text(
+            '当前版本 v${AppConstants.appVersion}，点击右上角按钮检查新版本。',
+            style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+        ];
+      case _UpdatePhase.checking:
+        return [
+          Text(
+            '正在连接 GitHub Releases 检查更新…',
+            style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+        ];
+      case _UpdatePhase.upToDate:
+        return [
+          Row(
+            children: [
+              Icon(Icons.check_circle_outline,
+                  size: 16, color: Colors.green.shade600),
+              const SizedBox(width: 6),
+              Text(
+                '已是最新版本（v${AppConstants.appVersion}）',
+                style: text.bodySmall
+                    ?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+            ],
+          ),
+        ];
+      case _UpdatePhase.available:
+        final u = _update!;
+        return [
+          Row(
+            children: [
+              Icon(Icons.new_releases_outlined,
+                  size: 16, color: scheme.primary),
+              const SizedBox(width: 6),
+              Text(
+                '发现新版本 v${u.version}',
+                style: text.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: scheme.primary,
+                ),
+              ),
+            ],
+          ),
+          if (u.notes.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: SelectableText(
+                u.notes.trim(),
+                maxLines: 10,
+                style: text.bodySmall?.copyWith(height: 1.6),
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              FilledButton.icon(
+                onPressed: u.setupUrl != null ? _upgrade : null,
+                icon: const Icon(Icons.download, size: 16),
+                label: const Text('立即升级'),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton(
+                onPressed: _openReleasePage,
+                child: const Text('查看发布页'),
+              ),
+              if (u.setupUrl == null)
+                Padding(
+                  padding: const EdgeInsets.only(left: 10),
+                  child: Text(
+                    '该版本未提供安装包，请前往发布页下载',
+                    style: text.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ];
+      case _UpdatePhase.downloading:
+        final u = _update;
+        return [
+          Text(
+            '正在下载 v${u?.version ?? ''} 安装包（${(_progress * 100).round()}%），'
+            '完成后将自动升级并重启应用。',
+            style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: _progress,
+              minHeight: 6,
+              backgroundColor:
+                  scheme.surfaceContainerHighest.withValues(alpha: 0.6),
+            ),
+          ),
+        ];
+      case _UpdatePhase.failed:
+        return [
+          Text(
+            _error ?? '检查更新失败',
+            style: text.bodySmall?.copyWith(color: scheme.error),
+          ),
+        ];
+    }
+  }
+
+  // ───────────────────────── 定位介绍 ─────────────────────────
 
   Widget _intro(TextTheme text, ColorScheme scheme) {
     return Column(
@@ -236,106 +456,90 @@ class AboutScreen extends StatelessWidget {
     );
   }
 
-  // ───────────────────────── 分区标题 / 小组标题 ─────────────────────────
+  // ───────────────────────── 分区标题 ─────────────────────────
 
   Widget _sectionTitle(BuildContext context, String title, String desc) {
     final text = Theme.of(context).textTheme;
     final scheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          style: text.titleLarge?.copyWith(fontWeight: FontWeight.w700),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          desc,
-          style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-        ),
-        const SizedBox(height: 6),
-      ],
-    );
-  }
-
-  Widget _groupHeader(BuildContext context, String label) {
-    final scheme = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.only(top: 18, bottom: 6),
-      child: Row(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 3,
-            height: 14,
-            decoration: BoxDecoration(
-              color: scheme.primary,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          const SizedBox(width: 8),
           Text(
-            label,
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: scheme.primary,
-                ),
+            title,
+            style: text.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            desc,
+            style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
           ),
         ],
       ),
     );
   }
 
-  // ───────────────────────── 功能行（图标 + 名称 + 说明） ─────────────────────────
+  // ───────────────────────── 核心能力网格 ─────────────────────────
 
-  List<Widget> _featureRows(
-    List<(IconData, String, String)> features,
-    ColorScheme scheme,
-  ) {
-    return [
-      for (final (icon, title, desc) in features)
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 7),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 34,
-                height: 34,
-                margin: const EdgeInsets.only(top: 2),
-                decoration: BoxDecoration(
-                  color: scheme.primaryContainer.withValues(alpha: 0.45),
-                  borderRadius: BorderRadius.circular(9),
-                ),
-                child: Icon(icon, size: 17, color: scheme.onPrimaryContainer),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
+  Widget _capabilityGrid(ColorScheme scheme) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final twoCol = constraints.maxWidth >= 620;
+        final itemWidth =
+            twoCol ? (constraints.maxWidth - 14) / 2 : constraints.maxWidth;
+        return Wrap(
+          spacing: 14,
+          runSpacing: 10,
+          children: [
+            for (final (icon, title, desc) in _capabilities)
+              SizedBox(
+                width: itemWidth,
+                child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 14.5,
+                    Container(
+                      width: 32,
+                      height: 32,
+                      margin: const EdgeInsets.only(top: 1),
+                      decoration: BoxDecoration(
+                        color: scheme.primaryContainer.withValues(alpha: 0.45),
+                        borderRadius: BorderRadius.circular(8),
                       ),
+                      child: Icon(icon,
+                          size: 16, color: scheme.onPrimaryContainer),
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      desc,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        height: 1.55,
-                        color: scheme.onSurfaceVariant,
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            desc,
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              height: 1.45,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
                 ),
               ),
-            ],
-          ),
-        ),
-    ];
+          ],
+        );
+      },
+    );
   }
 
   // ───────────────────────── 技术栈行 ─────────────────────────
@@ -390,7 +594,7 @@ class AboutScreen extends StatelessWidget {
       children: [
         for (var g = 0; g < groups.length; g++) ...[
           Padding(
-            padding: EdgeInsets.only(top: g == 0 ? 12 : 10, bottom: 6),
+            padding: EdgeInsets.only(top: g == 0 ? 4 : 10, bottom: 6),
             child: Text(
               groups[g].$1,
               style: TextStyle(
@@ -409,7 +613,8 @@ class AboutScreen extends StatelessWidget {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
-                    color: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                    color:
+                        scheme.surfaceContainerHighest.withValues(alpha: 0.5),
                     borderRadius: BorderRadius.circular(6),
                     border: Border.all(
                       color: scheme.outlineVariant.withValues(alpha: 0.5),

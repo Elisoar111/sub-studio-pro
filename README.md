@@ -1,10 +1,10 @@
-# Subtitle Studio Pro
+﻿# Subtitle Studio Pro
 
 Windows 字幕组专用视频处理工具（Flutter 桌面版），当前版本 **v2.0**。
 
 [![Flutter](https://img.shields.io/badge/Flutter-3.x-02569B?logo=flutter&logoColor=white)](https://flutter.dev)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows11&logoColor=white)]()
-[![Tests](https://img.shields.io/badge/tests-273%2F273-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-311%2F311-brightgreen)]()
 [![analyze](https://img.shields.io/badge/dart%20analyze-0%20issues-brightgreen)]()
 
 字幕组从「拿到生肉」到「发布熟肉」的一站式桌面工具：字幕转码、轨道提取与
@@ -23,11 +23,12 @@ Windows 字幕组专用视频处理工具（Flutter 桌面版），当前版本 
 | AI 字幕翻译 | OpenAI 兼容 API；术语表/人名表锁定；批间上下文；断点续传；可选润色二阶段；双语合并输出 | v1.2 |
 | Whisper 转写 | openai-whisper / faster-whisper 双后端；GPU 自动推荐；VAD 静音过滤；`{episode}` 提示词模板 | v1.2 |
 | 术语库与后端扩展 | `.glossary.json` 术语旁车（跨任务共享）；自定义润色指令；whisper.cpp 实验后端；依赖大版本迁移 | v1.3 |
-| 自动化与多语言 | 监视文件夹无人值守流水线（配对即烧录）；系统托盘常驻（暂停队列/退出）；中/英界面即时切换 | v2.0 |
+| 自动化 | 监视文件夹无人值守流水线（配对即烧录）；系统托盘常驻（暂停队列/退出） | v2.0 |
+| 发布就绪 | Inno Setup 安装包 + 字幕文件关联；GitHub Releases 自动更新（启动检查 + 一键升级）；崩溃捕获与结构化日志 + 调试包导出；CI 门禁与 tag 发布 | v1.5 |
 
 基础设施：全局快捷键、参数预设、历史记录、输出路径/文件名模板自定义、
-Material 3 多主题（亮/暗/种子色）、zh/en 多语言（跟随系统或手动切换）、
-窗口 800×600~全屏自适应。
+Material 3 多主题（亮/暗/种子色）、窗口 800×600~全屏自适应。
+界面为纯中文（v1.5 发布前移除多语言体系，目标用户为国内字幕组）。
 
 > 视频处理通过子进程调用外部工具（FFmpeg/FFprobe、MKVToolNix、Whisper CLI），
 > 不依赖移动端 FFI 库；工具优先级：设置页自定义路径 → 捆绑 `resources/` → 系统 PATH。
@@ -58,7 +59,6 @@ lib/
 │   ├── queue_task.dart / task_params.dart / task_run_result.dart
 │   ├── mux_track.dart / encode_options.dart / video_info.dart / history_entry.dart
 ├── providers/app_providers.dart      # Riverpod：settings/history/preset/queue
-├── l10n/                             # zh/en 双语言 ARB（gen-l10n；托盘经 L10nHolder）
 ├── screens/                          # 18 个页面
 │   ├── home_shell.dart               #   NavigationRail 侧边导航 + 全局快捷键
 │   ├── convert / burn / transcode    #   字幕转换 / 烧录 / 转码
@@ -80,12 +80,20 @@ lib/
 │   ├── task_runner.dart              # 各任务类型 → 具体服务的分发执行
 │   ├── watch_folder_service.dart     # 监视文件夹无人值守流水线（配对即烧录）
 │   ├── tray_service.dart             # 系统托盘（显示主窗 / 暂停队列 / 退出）
-│   └── storage_service.dart          # Hive：历史/预设/设置
+│   ├── storage_service.dart          # Hive：历史/预设/设置
+│   ├── logging/                      # 崩溃捕获 + 结构化日志（JSON Lines 轮转）+ 调试包
+│   └── update/                       # GitHub Releases 自动更新（启动检查/下载/静默升级）
 └── widgets/                          # 通用组件 + 播放器面板（样式/列表/信息/控制）
 ```
 
-`test/`（45 文件，273 用例）：服务层单测（翻译批次/断点续传/Whisper 参数/
-队列调度/字幕解析编码）+ 页面布局回归（800×600/1024×700/1280×800 三档无溢出）。
+`test/`（311 用例）：服务层单测（翻译批次/断点续传/Whisper 参数/
+队列调度/字幕解析编码/自动更新）+ 页面布局回归（800×600/1024×700/1280×800 三档无溢出）。
+
+## 文档
+
+- [用户手册](docs/USER_MANUAL.md) —— 安装、环境依赖、各功能页使用与常见问题
+- [隐私声明](docs/PRIVACY.md) —— 数据外发范围（仅 AI 翻译字幕文本与更新检查）
+- [路线图](docs/ROADMAP.md) —— 版本演进与当前状态
 
 ## 快速开始
 
@@ -105,7 +113,7 @@ flutter build windows                  # 打包 Release
 
 # 3. 质量门禁
 dart analyze                           # 当前 0 issues
-flutter test                           # 当前 273/273
+flutter test                           # 当前 311/311
 ```
 
 > - 仓库不含 `resources/ffmpeg/*.exe`（单文件 185MB 超 GitHub 100MB 限制），按上文自行放置或走系统 PATH。
@@ -149,9 +157,8 @@ flutter test                           # 当前 273/273
 ## 路线图
 
 维护与更新计划见 [docs/ROADMAP.md](docs/ROADMAP.md)：
-v1.0~v1.3 与 v2.0（监视文件夹、托盘、多语言界面）已全部落地；下一步 v1.5
-发布就绪（安装包、自动更新、CI、崩溃日志、隐私声明），期间多语言按页面增量
-迁移、whisper.cpp 验证转正。
+v1.0~v1.3、v1.5（安装包、自动更新、CI、崩溃日志、发布文档）与 v2.0
+（监视文件夹、托盘）已全部落地；多语言界面已按产品决策回退为纯中文。
 
 ## License
 
