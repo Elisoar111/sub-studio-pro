@@ -167,3 +167,30 @@ Future<void> checkForUpdatesSilently({UpdateService? service}) async {
     // 静默失败：无网络 / API 限流等场景不打扰用户
   }
 }
+
+/// 自动检查间隔（v2.1.0）。
+const updateCheckInterval = Duration(hours: 6);
+
+Timer? _updateCheckTimer;
+
+/// 定时自动检查更新（v2.1.0）：应用运行期间每 [interval] 静默检查
+/// 一次，发现新版本写 [startupUpdate]（首页横幅展示与交互已有）。
+/// 幂等：重复调用先取消旧定时器。设置页「自动检查更新」开关控制启停。
+/// [service] / [timerFactory] 为注入缝，测试用 fake 验证调度行为。
+void startPeriodicUpdateCheck({
+  UpdateService? service,
+  Duration interval = updateCheckInterval,
+  Timer Function(Duration, void Function(Timer))? timerFactory,
+}) {
+  stopPeriodicUpdateCheck();
+  final create = timerFactory ?? Timer.periodic;
+  _updateCheckTimer = create(interval, (_) {
+    checkForUpdatesSilently(service: service);
+  });
+}
+
+/// 停止定时自动检查（开关关闭 / 测试清理时调用）。
+void stopPeriodicUpdateCheck() {
+  _updateCheckTimer?.cancel();
+  _updateCheckTimer = null;
+}

@@ -208,7 +208,8 @@ class QueueService extends ChangeNotifier {
     task.finishedAt = DateTime.now();
     _tokens.remove(task.id);
     notifyListeners();
-    _historySaver?.call(task);
+    // 被用户 removeTask / clearAll 主动移除的任务不再写历史
+    if (_tasks.contains(task)) _historySaver?.call(task);
   }
 
   // ─────────────────────── 暂停 / 恢复 ───────────────────────
@@ -260,6 +261,9 @@ class QueueService extends ChangeNotifier {
   }
 
   void removeTask(String id) {
+    // 运行中任务：先取消其子进程再移除——否则 token 从 map 消失后
+    // 再也无法取消，ffmpeg/mkvmerge 会继续跑完并写盘
+    _tokens[id]?.cancel();
     _tasks.removeWhere((t) => t.id == id);
     _tokens.remove(id);
     notifyListeners();
@@ -271,6 +275,10 @@ class QueueService extends ChangeNotifier {
   }
 
   void clearAll() {
+    // 同 removeTask：先取消所有运行中任务的子进程再清列表
+    for (final t in _tokens.values) {
+      t.cancel();
+    }
     _tokens.clear();
     _tasks.clear();
     notifyListeners();

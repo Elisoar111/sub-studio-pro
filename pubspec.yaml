@@ -1,7 +1,7 @@
 name: subtitle_studio_pro
 description: "Subtitle Studio Pro —— Windows 字幕组专用视频处理工具：字幕格式转换 / 烧录 / 提取 / 转码压缩"
 publish_to: 'none'
-version: 2.0.0+4
+version: 2.1.0+5
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -61,6 +61,8 @@ dev_dependencies:
   flutter_lints: ^4.0.0
   # 测试 fake FilePickerPlatform 用的 verifyToken 放行 mixin
   plugin_platform_interface: ^2.1.7
+  # 测试 fake PathProviderPlatform 用的接口（服务层 tempDir 路径注入）
+  path_provider_platform_interface: ^2.1.0
 
 flutter:
   uses-material-design: true

@@ -221,9 +221,13 @@ class SubtitleParser {
 
   /// 解析 ASS 时间 `H:MM:SS.cc`（厘秒，也可能 1~3 位小数）。
   /// 正则容忍首尾空白，避免热路径上每字段一次 trim 分配。
+  /// 返回 null = 非法时间（含超出 64 位整数范围的超大数字），
+  /// 调用方据此跳过该行 Dialogue 而不是让整份文件解析失败。
   static Duration? _parseAssTime(String s) {
     final m = _assTime.firstMatch(s);
     if (m == null) return null;
+    final hours = int.tryParse(m.group(1)!);
+    if (hours == null) return null;
     final frac = m.group(4) ?? '';
     var ms = 0;
     if (frac.isNotEmpty) {
@@ -233,7 +237,7 @@ class SubtitleParser {
           : int.parse(frac.padRight(2, '0')) * 10;
     }
     return Duration(
-      hours: int.parse(m.group(1)!),
+      hours: hours,
       minutes: int.parse(m.group(2)!),
       seconds: int.parse(m.group(3)!),
       milliseconds: ms,

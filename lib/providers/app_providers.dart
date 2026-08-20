@@ -11,6 +11,7 @@ import '../services/ai/translation_service.dart' show GlossaryTerm, kGlossaryMax
 import '../services/ffmpeg/ffmpeg_service.dart';
 import '../services/queue_service.dart';
 import '../services/storage_service.dart';
+import '../services/update/update_service.dart';
 
 /// ── Riverpod 状态管理 ──
 /// 选型理由：
@@ -37,6 +38,7 @@ class SettingsProvider extends ChangeNotifier {
   static const _kGlossary = 'ai_glossary';
   static const _kPolishCustomRules = 'ai_polish_custom_rules';
   static const _kCloseToTray = 'close_to_tray';
+  static const _kAutoUpdateCheck = 'auto_update_check';
   static const _kWatchEnabled = 'watch_enabled';
   static const _kWatchDir = 'watch_dir';
   static const _kWatchOutputDir = 'watch_output_dir';
@@ -64,6 +66,10 @@ class SettingsProvider extends ChangeNotifier {
   /// 关闭窗口时最小化到系统托盘（v2.0，默认开启；关闭则直接退出）
   bool _closeToTray = true;
 
+  /// 自动检查更新（v2.1.0，默认开启）：运行期间每 6 小时静默检查
+  /// GitHub Releases，发现新版本首页横幅提示。
+  bool _autoUpdateCheck = true;
+
   /// 监视文件夹（v2.0 无人值守流水线）：开关 / 监视目录 / 输出目录
   /// （输出目录空 = <监视目录>\burned）。
   bool _watchEnabled = false;
@@ -90,6 +96,8 @@ class SettingsProvider extends ChangeNotifier {
   String get polishCustomRules => _polishCustomRules;
 
   bool get closeToTray => _closeToTray;
+
+  bool get autoUpdateCheck => _autoUpdateCheck;
 
   bool get watchEnabled => _watchEnabled;
 
@@ -140,6 +148,10 @@ class SettingsProvider extends ChangeNotifier {
         StorageService.instance.getSetting(_kPolishCustomRules);
     _closeToTray = StorageService.instance.getSetting(
       _kCloseToTray,
+      fallback: 'true',
+    ) != 'false';
+    _autoUpdateCheck = StorageService.instance.getSetting(
+      _kAutoUpdateCheck,
       fallback: 'true',
     ) != 'false';
     _watchEnabled =
@@ -238,6 +250,20 @@ class SettingsProvider extends ChangeNotifier {
     _closeToTray = value;
     notifyListeners();
     await StorageService.instance.setSetting(_kCloseToTray, '$value');
+  }
+
+  /// 设置自动检查更新（v2.1.0）：开 = 启动每 6 小时的静默检查，
+  /// 关 = 停止定时器；保存后即时生效，无需重启。
+  Future<void> setAutoUpdateCheck(bool value) async {
+    if (_autoUpdateCheck == value) return;
+    _autoUpdateCheck = value;
+    notifyListeners();
+    if (value) {
+      startPeriodicUpdateCheck();
+    } else {
+      stopPeriodicUpdateCheck();
+    }
+    await StorageService.instance.setSetting(_kAutoUpdateCheck, '$value');
   }
 
   /// 保存监视文件夹配置（v2.0）；调用方随后需触发

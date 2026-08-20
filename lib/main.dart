@@ -37,11 +37,34 @@ class _WindowCloseHandler with WindowListener {
   }
 }
 
-/// 退出应用：清理托盘图标后销毁窗口（setPreventClose 下 destroy 仍生效）。
-Future<void> _exitApp() async {
-  await TrayService.instance.shutdown();
-  await windowManager.destroy();
+/// 退出序列（v2.0.2 修复）：托盘清理失败绝不阻断窗口销毁——否则托盘
+/// destroy 抛异常时应用将完全无法退出，只能任务管理器杀进程。
+/// 每步失败仅记日志继续走下一步（与关于页升级退出的保护策略一致）。
+/// [cleanup] / [destroy] / [onError] 为注入缝，测试传 fake 验证序列行为。
+@visibleForTesting
+Future<void> safeExitSequence({
+  required Future<void> Function() cleanup,
+  required Future<void> Function() destroy,
+  void Function(String step, Object error)? onError,
+}) async {
+  try {
+    await cleanup();
+  } catch (e) {
+    onError?.call('cleanup', e);
+  }
+  try {
+    await destroy();
+  } catch (e) {
+    onError?.call('destroy', e);
+  }
 }
+
+/// 退出应用：清理托盘图标后销毁窗口（setPreventClose 下 destroy 仍生效）。
+Future<void> _exitApp() => safeExitSequence(
+      cleanup: TrayService.instance.shutdown,
+      destroy: windowManager.destroy,
+      onError: (step, e) => Logger.instance.error('退出时 $step 失败', e),
+    );
 
 /// 应用入口（仅 Windows 桌面）。
 ///
@@ -137,6 +160,12 @@ Future<void> main(List<String> args) async {
   // 9) 启动检查更新（v1.5-2）：后台静默查 GitHub Releases，发现新版本
   //    时首页横幅提示；无网络 / 失败静默忽略，不阻塞启动
   unawaited(checkForUpdatesSilently());
+
+  // 9b) 定时自动检查更新（v2.1.0）：运行期间每 6 小时静默检查一次；
+  //     设置页「自动检查更新」开关可随时启停（即时生效）
+  if (SettingsProvider.instance.autoUpdateCheck) {
+    startPeriodicUpdateCheck();
+  }
 
   runApp(ProviderScope(
     overrides: [

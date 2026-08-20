@@ -55,4 +55,22 @@ void main() {
       expect(doc.cues.single.rawText, '第一行\n第二行');
     });
   });
+
+  group('损坏时间码容错（v2.0.1）', () {
+    test('ASS 小时字段为超大数字时应跳过该行而不是整份失败', () {
+      // int.parse 对超过 64 位范围的数字抛 FormatException：
+      // 一行坏 Dialogue 不应让整份字幕解析失败
+      const ass = '[Script Info]\n'
+          'ScriptType: v4.00+\n\n'
+          '[Events]\n'
+          'Format: Layer, Start, End, Style, Name, MarginL, MarginR, '
+          'MarginV, Effect, Text\n'
+          'Dialogue: 0,99999999999999999999:00:01.00,'
+          '99999999999999999999:00:03.00,Default,,0,0,0,,坏行\n'
+          'Dialogue: 0,0:00:05.00,0:00:08.00,Default,,0,0,0,,正常行\n';
+      final doc = SubtitleParser.parseText(ass, format: SubtitleFormat.ass);
+      expect(doc.cues.length, 1, reason: '坏时间码行应被跳过');
+      expect(doc.cues.single.rawText, '正常行');
+    });
+  });
 }

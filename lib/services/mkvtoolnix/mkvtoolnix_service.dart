@@ -133,6 +133,11 @@ class MkvFileInfo {
   });
 }
 
+/// 宽容 UTF-8 解码（坏字节 → U+FFFD）：mkv 工具输出含旧式 GBK/ANSI
+/// 文件名或轨道名时不再抛 FormatException 令任务整体失败，
+/// 与 Whisper / FFmpeg 后端的解码策略保持一致。
+const _lenientUtf8 = Utf8Codec(allowMalformed: true);
+
 class MkvToolNixService {
   MkvToolNixService._();
 
@@ -246,7 +251,7 @@ class MkvToolNixService {
         return false;
       }
       final r = await Process.run(merge, ['--version'],
-          stdoutEncoding: utf8, stderrEncoding: utf8);
+          stdoutEncoding: _lenientUtf8, stderrEncoding: _lenientUtf8);
       if (r.exitCode != 0) return false;
       final first = (r.stdout as String).split('\n').first.trim();
       final m = RegExp(r'mkvmerge v([\d.]+)').firstMatch(first);
@@ -340,7 +345,7 @@ class MkvToolNixService {
   Future<MkvFileInfo?> _doProbe(String path) async {
     try {
       final r = await Process.run(_mkvmergeBin!, ['-J', path],
-          stdoutEncoding: utf8, stderrEncoding: utf8);
+          stdoutEncoding: _lenientUtf8, stderrEncoding: _lenientUtf8);
       // mkvmerge -J 退出码：0 = 成功，1 = 警告（JSON 仍完整有效，
       // 常见于轻微损坏的 MKV），2 = 识别失败。1 不能当失败。
       if (r.exitCode != 0 && r.exitCode != 1) return null;
@@ -810,6 +815,11 @@ class MkvToolNixService {
 
   // ───────────────────────── 进程执行核心 ─────────────────────────
 
+  /// mkv 工具 stdout/stderr 的逐行解码流：宽容 UTF-8（见 [_lenientUtf8]）。
+  @visibleForTesting
+  static Stream<String> decodeToolLines(Stream<List<int>> raw) =>
+      raw.transform(_lenientUtf8.decoder).transform(const LineSplitter());
+
   /// 运行 mkv 工具子进程：
   /// - 进度：stdout/stderr 逐行解析 `Progress: N%`（mkv 工具用 \r 刷新
   ///   进度行，需按 \r 和 \n 共同分行）
@@ -841,10 +851,8 @@ class MkvToolNixService {
 
     cancelToken?.addListener(onCancel);
 
-    Future<void> lines(Stream<List<int>> raw) => raw
-        .transform(utf8.decoder)
-        .transform(const LineSplitter()) // 按 \n 分行
-        .forEach((line) {
+    Future<void> lines(Stream<List<int>> raw) =>
+        decodeToolLines(raw).forEach((line) {
         // 进度行用 \r 刷新（一行内含多段），逐段解析
         for (final seg in line.split('\r')) {
           final s = seg.trim();

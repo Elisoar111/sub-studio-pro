@@ -160,16 +160,6 @@ class _HomeShellState extends ConsumerState<HomeShell> {
                           color: Colors.white,
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'SSP',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 1.5,
-                          color: scheme.primary,
-                        ),
-                      ),
                     ],
                   ),
                 ),

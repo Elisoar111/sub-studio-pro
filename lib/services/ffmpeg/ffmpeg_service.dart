@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -15,6 +16,10 @@ import 'ffmpeg_runner_process.dart';
 /// 用户侧的轨道提取与封装已全部改由 MKVToolNix（mkvextract / mkvmerge）完成。
 class FfmpegService {
   FfmpegService._(this.runner);
+
+  /// 测试注入自定义 runner（如内存 fake，不依赖本机 FFmpeg）。
+  @visibleForTesting
+  FfmpegService.forTest(this.runner);
 
   final FfmpegRunner runner;
 
@@ -237,6 +242,9 @@ class FfmpegService {
   }
 
   /// 烧录视频内嵌字幕轨：先提取到临时文件，再执行烧录。
+  ///
+  /// 预提取的临时 SRT 在任何退出路径（成功/失败/取消/异常）后都会删除，
+  /// 防止系统临时目录堆积 `embedded_track_<n>.srt`。
   Future<TaskRunResult> burnEmbeddedTrack({
     required String videoPath,
     required int trackIndex,
@@ -252,27 +260,39 @@ class FfmpegService {
   }) async {
     final temp = await tempDir();
     final tmpSub = p.join(temp, 'embedded_track_$trackIndex.srt');
-    final extract = await extractTrack(
-      videoPath: videoPath,
-      selector: 's:$trackIndex',
-      trackType: 'subtitle',
-      outputPath: tmpSub,
-      subtitleFormat: 'srt',
-    );
-    if (!extract.success) return extract;
-    return burnSubtitles(
-      videoPath: videoPath,
-      subtitlePath: tmpSub,
-      outputPath: outputPath,
-      encode: encode,
-      useAssFilter: useAssFilter,
-      forceStyle: forceStyle,
-      fontsDir: fontsDir,
-      totalDuration: totalDuration,
-      onProgress: onProgress,
-      onLog: onLog,
-      cancelToken: cancelToken,
-    );
+    try {
+      final extract = await extractTrack(
+        videoPath: videoPath,
+        selector: 's:$trackIndex',
+        trackType: 'subtitle',
+        outputPath: tmpSub,
+        subtitleFormat: 'srt',
+      );
+      if (!extract.success) return extract;
+      return await burnSubtitles(
+        videoPath: videoPath,
+        subtitlePath: tmpSub,
+        outputPath: outputPath,
+        encode: encode,
+        useAssFilter: useAssFilter,
+        forceStyle: forceStyle,
+        fontsDir: fontsDir,
+        totalDuration: totalDuration,
+        onProgress: onProgress,
+        onLog: onLog,
+        cancelToken: cancelToken,
+      );
+    } finally {
+      _deleteQuietly(tmpSub);
+    }
+  }
+
+  /// 删除临时文件（不存在或删除失败均静默忽略）。
+  static void _deleteQuietly(String path) {
+    try {
+      final f = File(path);
+      if (f.existsSync()) f.deleteSync();
+    } catch (_) {}
   }
 
   // ─────────────────────── 轨道提取（内嵌字幕轨烧录的预提取） ───────────────────────

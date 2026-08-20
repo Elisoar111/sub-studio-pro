@@ -3,7 +3,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:window_manager/window_manager.dart';
 
+import '../core/constants.dart';
 import '../core/theme.dart';
 import '../core/utils/filename_template.dart';
 import '../core/utils/reveal_file.dart';
@@ -13,6 +15,8 @@ import '../services/ffmpeg/ffmpeg_service.dart';
 import '../services/logging/debug_bundle.dart';
 import '../services/mkvtoolnix/mkvtoolnix_service.dart';
 import '../services/storage_service.dart';
+import '../services/tray_service.dart';
+import '../services/update/update_service.dart';
 import '../services/watch_folder_service.dart';
 import '../services/whisper/whisper_models.dart';
 import '../services/whisper/whisper_service.dart';
@@ -23,13 +27,20 @@ import '../widgets/common.dart';
 /// 窄窗口（< 840）退化为纯滚动列表。
 ///
 /// 分组构成：外观 = 主题；输出 = 输出默认值；环境依赖 = FFmpeg +
-/// MKVToolNix + Whisper；AI = 翻译 API；维护 = 临时文件清理。
+/// MKVToolNix + Whisper；AI = 翻译 API；自动化 = 托盘 / 监视文件夹；
+/// 维护 = 版本与更新（v2.1.0 自关于页迁入）+ 临时文件清理。
 class SettingsScreen extends ConsumerStatefulWidget {
-  const SettingsScreen({super.key});
+  const SettingsScreen({super.key, this.updateService});
+
+  /// 更新服务（测试注入 fake；默认单例走 GitHub API）。
+  final UpdateService? updateService;
 
   @override
   ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
 }
+
+/// 更新流程阶段（v2.1.0 自关于页迁入设置页）。
+enum _UpdatePhase { idle, checking, upToDate, available, downloading, failed }
 
 /// 锚点分组。
 enum _Group { appearance, output, env, ai, automation, maintenance }
@@ -78,6 +89,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   /// 自定义色相（与预设二选一，最后操作生效）
   double? _customHue;
+
+  // ── 更新流程状态（v2.1.0 自关于页迁入）──
+  _UpdatePhase _updatePhase = _UpdatePhase.idle;
+  UpdateInfo? _updateInfo;
+  double _updateProgress = 0;
+  String? _updateError;
+
+  UpdateService get _updateSvc =>
+      widget.updateService ?? UpdateService.instance;
 
   static const _groupNavs = [
     _GroupNav(_Group.appearance, Icons.palette_outlined, '外观'),
@@ -395,7 +415,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       const SizedBox(height: 24),
       groupHead(_Group.automation, _automationSection(settings, scheme)),
       const SizedBox(height: 24),
-      groupHead(_Group.maintenance, _maintenanceSection()),
+      groupHead(_Group.maintenance,
+          _maintenanceSection(settings, scheme)),
     ];
   }
 
@@ -621,13 +642,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   /// 维护区块。
-  Widget _maintenanceSection() {
+  Widget _maintenanceSection(SettingsProvider settings, ColorScheme scheme) {
     return SectionCard(
       title: '维护',
       icon: Icons.build_outlined,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          _updateBlock(settings, scheme),
+          const Divider(height: 24),
           OutlinedButton.icon(
             onPressed: _cleanTemp,
             icon: const Icon(Icons.cleaning_services_outlined),
@@ -642,6 +665,245 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ],
       ),
     );
+  }
+
+  // ───────────────────────── 版本与更新（v2.1.0 自关于页迁入）─────────────────────────
+
+  Future<void> _checkUpdate() async {
+    setState(() {
+      _updatePhase = _UpdatePhase.checking;
+      _updateError = null;
+    });
+    try {
+      final info =
+          await _updateSvc.checkLatest(currentVersion: AppConstants.appVersion);
+      if (!mounted) return;
+      setState(() {
+        _updateInfo = info;
+        _updatePhase =
+            info == null ? _UpdatePhase.upToDate : _UpdatePhase.available;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _updatePhase = _UpdatePhase.failed;
+        _updateError = '检查更新失败：$e';
+      });
+    }
+  }
+
+  Future<void> _upgrade() async {
+    final info = _updateInfo;
+    final url = info?.setupUrl;
+    if (info == null || url == null) return;
+    setState(() {
+      _updatePhase = _UpdatePhase.downloading;
+      _updateProgress = 0;
+    });
+    try {
+      final dest =
+          '${Directory.systemTemp.path}${Platform.pathSeparator}'
+          'SubtitleStudioPro-${info.version}-setup.exe';
+      await _updateSvc.downloadSetup(url, dest, onProgress: (p) {
+        if (mounted) setState(() => _updateProgress = p);
+      });
+      await _updateSvc.launchInstaller(dest);
+      // 安装程序已独立启动（/SILENT），退出本应用让位升级
+      await _exitApp();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _updatePhase = _UpdatePhase.failed;
+        _updateError = '升级失败：$e';
+      });
+    }
+  }
+
+  Future<void> _exitApp() async {
+    try {
+      await TrayService.instance.shutdown();
+    } catch (_) {}
+    try {
+      await windowManager.destroy();
+    } catch (_) {}
+  }
+
+  Future<void> _openReleasePage() async {
+    final url = _updateInfo?.releaseUrl;
+    if (url == null || url.isEmpty) return;
+    try {
+      await Process.run('cmd', ['/c', 'start', '', url]);
+    } catch (_) {}
+  }
+
+  Widget _updateBlock(SettingsProvider settings, ColorScheme scheme) {
+    final text = Theme.of(context).textTheme;
+    final busy = _updatePhase == _UpdatePhase.checking ||
+        _updatePhase == _UpdatePhase.downloading;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '版本与更新',
+                style: text.titleMedium
+                    ?.copyWith(fontWeight: FontWeight.w600),
+              ),
+            ),
+            OutlinedButton.icon(
+              onPressed: busy ? null : _checkUpdate,
+              icon: busy
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh, size: 16),
+              label: Text(
+                _updatePhase == _UpdatePhase.checking
+                    ? '检查中…'
+                    : _updatePhase == _UpdatePhase.downloading
+                        ? '下载中…'
+                        : '检查更新',
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        ..._updateStatusBody(scheme, text),
+        const Divider(height: 24),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('自动检查更新'),
+          subtitle: const Text(
+            '每 6 小时静默检查 GitHub Releases，发现新版本时首页横幅提示',
+          ),
+          value: settings.autoUpdateCheck,
+          onChanged: settings.setAutoUpdateCheck,
+        ),
+      ],
+    );
+  }
+
+  List<Widget> _updateStatusBody(ColorScheme scheme, TextTheme text) {
+    switch (_updatePhase) {
+      case _UpdatePhase.idle:
+        return [
+          Text(
+            '当前版本 v${AppConstants.appVersion}，点击右上角按钮检查新版本。',
+            style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+        ];
+      case _UpdatePhase.checking:
+        return [
+          Text(
+            '正在连接 GitHub Releases 检查更新…',
+            style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+        ];
+      case _UpdatePhase.upToDate:
+        return [
+          Row(
+            children: [
+              Icon(Icons.check_circle_outline,
+                  size: 16, color: Colors.green.shade600),
+              const SizedBox(width: 6),
+              Text(
+                '已是最新版本（v${AppConstants.appVersion}）',
+                style: text.bodySmall
+                    ?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+            ],
+          ),
+        ];
+      case _UpdatePhase.available:
+        final u = _updateInfo!;
+        return [
+          Row(
+            children: [
+              Icon(Icons.new_releases_outlined,
+                  size: 16, color: scheme.primary),
+              const SizedBox(width: 6),
+              Text(
+                '发现新版本 v${u.version}',
+                style: text.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: scheme.primary,
+                ),
+              ),
+            ],
+          ),
+          if (u.notes.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: SelectableText(
+                u.notes.trim(),
+                maxLines: 10,
+                style: text.bodySmall?.copyWith(height: 1.6),
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              FilledButton.icon(
+                onPressed: u.setupUrl != null ? _upgrade : null,
+                icon: const Icon(Icons.download, size: 16),
+                label: const Text('立即升级'),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton(
+                onPressed: _openReleasePage,
+                child: const Text('查看发布页'),
+              ),
+              if (u.setupUrl == null)
+                Padding(
+                  padding: const EdgeInsets.only(left: 10),
+                  child: Text(
+                    '该版本未提供安装包，请前往发布页下载',
+                    style: text.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ];
+      case _UpdatePhase.downloading:
+        final u = _updateInfo;
+        return [
+          Text(
+            '正在下载 v${u?.version ?? ''} 安装包（${(_updateProgress * 100).round()}%），'
+            '完成后将自动升级并重启应用。',
+            style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: _updateProgress,
+              minHeight: 6,
+              backgroundColor:
+                  scheme.surfaceContainerHighest.withValues(alpha: 0.6),
+            ),
+          ),
+        ];
+      case _UpdatePhase.failed:
+        return [
+          Text(
+            _updateError ?? '检查更新失败',
+            style: text.bodySmall?.copyWith(color: scheme.error),
+          ),
+        ];
+    }
   }
 
   // ───────────────────────── MKVToolNix ─────────────────────────

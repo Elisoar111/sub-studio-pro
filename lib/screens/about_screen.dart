@@ -1,40 +1,18 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
-import 'package:window_manager/window_manager.dart';
 
 import '../core/constants.dart';
-import '../services/tray_service.dart';
-import '../services/update/update_service.dart';
 
-/// 关于页（v1.5 重设计）：品牌横幅 + 版本与更新入口 + 能力速览 +
-/// 技术栈与格式支持。
-///
-/// 排版原则：品牌横幅是全页唯一的视觉锚点（渐变底 + 大图标 + 产品名），
-/// 其余内容用分组标题、细分隔线与留白组织层级；「检查更新」是唯一
-/// 主动作。更新流程：GitHub Releases 检查 → 下载安装包 → 静默升级
-/// 并退出本应用。
+/// 关于页（v2.1.0 更新）：纯信息页——品牌横幅 + 定位介绍 + 能力速览 +
+/// 技术栈与格式支持。检查更新入口已迁至设置页「维护」分组
+/// （版本与更新区块，含每 6 小时的自动检查开关）。
 class AboutScreen extends StatefulWidget {
-  const AboutScreen({super.key, this.updateService});
-
-  /// 更新服务（测试注入 fake；默认单例走 GitHub API）。
-  final UpdateService? updateService;
+  const AboutScreen({super.key});
 
   @override
   State<AboutScreen> createState() => _AboutScreenState();
 }
 
-/// 更新流程阶段。
-enum _UpdatePhase { idle, checking, upToDate, available, downloading, failed }
-
 class _AboutScreenState extends State<AboutScreen> {
-  _UpdatePhase _phase = _UpdatePhase.idle;
-  UpdateInfo? _update;
-  double _progress = 0;
-  String? _error;
-
-  UpdateService get _svc => widget.updateService ?? UpdateService.instance;
-
   // ───────────────────────── 数据 ─────────────────────────
 
   static const _capabilities = [
@@ -56,75 +34,6 @@ class _AboutScreenState extends State<AboutScreen> {
     ('Whisper', '本地语音识别转写（openai-whisper / faster-whisper / whisper.cpp 多后端）'),
     ('Hive', '历史与配置的本机存储；API Key 与处理过程均不上传'),
   ];
-
-  // ───────────────────────── 更新流程 ─────────────────────────
-
-  Future<void> _checkUpdate() async {
-    setState(() {
-      _phase = _UpdatePhase.checking;
-      _error = null;
-    });
-    try {
-      final info =
-          await _svc.checkLatest(currentVersion: AppConstants.appVersion);
-      if (!mounted) return;
-      setState(() {
-        _update = info;
-        _phase =
-            info == null ? _UpdatePhase.upToDate : _UpdatePhase.available;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _phase = _UpdatePhase.failed;
-        _error = '检查更新失败：$e';
-      });
-    }
-  }
-
-  Future<void> _upgrade() async {
-    final info = _update;
-    final url = info?.setupUrl;
-    if (info == null || url == null) return;
-    setState(() {
-      _phase = _UpdatePhase.downloading;
-      _progress = 0;
-    });
-    try {
-      final dest =
-          '${Directory.systemTemp.path}${Platform.pathSeparator}'
-          'SubtitleStudioPro-${info.version}-setup.exe';
-      await _svc.downloadSetup(url, dest, onProgress: (p) {
-        if (mounted) setState(() => _progress = p);
-      });
-      await _svc.launchInstaller(dest);
-      // 安装程序已独立启动（/SILENT），退出本应用让位升级
-      await _exitApp();
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _phase = _UpdatePhase.failed;
-        _error = '升级失败：$e';
-      });
-    }
-  }
-
-  Future<void> _exitApp() async {
-    try {
-      await TrayService.instance.shutdown();
-    } catch (_) {}
-    try {
-      await windowManager.destroy();
-    } catch (_) {}
-  }
-
-  Future<void> _openReleasePage() async {
-    final url = _update?.releaseUrl;
-    if (url == null || url.isEmpty) return;
-    try {
-      await Process.run('cmd', ['/c', 'start', '', url]);
-    } catch (_) {}
-  }
 
   // ───────────────────────── 构建 ─────────────────────────
 
@@ -156,7 +65,6 @@ class _AboutScreenState extends State<AboutScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _heroBand(scheme, text),
-                    _updatePanel(scheme, text),
                     const SizedBox(height: 32),
                     _intro(text, scheme),
                     _sectionTitle(context, '核心能力',
@@ -264,170 +172,6 @@ class _AboutScreenState extends State<AboutScreen> {
         ],
       ),
     );
-  }
-
-  // ───────────────────────── 更新面板 ─────────────────────────
-
-  Widget _updatePanel(ColorScheme scheme, TextTheme text) {
-    final busy =
-        _phase == _UpdatePhase.checking || _phase == _UpdatePhase.downloading;
-    return Padding(
-      padding: const EdgeInsets.only(top: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '版本与更新',
-                  style: text.titleMedium
-                      ?.copyWith(fontWeight: FontWeight.w600),
-                ),
-              ),
-              OutlinedButton.icon(
-                onPressed: busy ? null : _checkUpdate,
-                icon: busy
-                    ? const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.refresh, size: 16),
-                label: Text(
-                  _phase == _UpdatePhase.checking
-                      ? '检查中…'
-                      : _phase == _UpdatePhase.downloading
-                          ? '下载中…'
-                          : '检查更新',
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          ..._updateStatusBody(scheme, text),
-        ],
-      ),
-    );
-  }
-
-  List<Widget> _updateStatusBody(ColorScheme scheme, TextTheme text) {
-    switch (_phase) {
-      case _UpdatePhase.idle:
-        return [
-          Text(
-            '当前版本 v${AppConstants.appVersion}，点击右上角按钮检查新版本。',
-            style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-          ),
-        ];
-      case _UpdatePhase.checking:
-        return [
-          Text(
-            '正在连接 GitHub Releases 检查更新…',
-            style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-          ),
-        ];
-      case _UpdatePhase.upToDate:
-        return [
-          Row(
-            children: [
-              Icon(Icons.check_circle_outline,
-                  size: 16, color: Colors.green.shade600),
-              const SizedBox(width: 6),
-              Text(
-                '已是最新版本（v${AppConstants.appVersion}）',
-                style: text.bodySmall
-                    ?.copyWith(color: scheme.onSurfaceVariant),
-              ),
-            ],
-          ),
-        ];
-      case _UpdatePhase.available:
-        final u = _update!;
-        return [
-          Row(
-            children: [
-              Icon(Icons.new_releases_outlined,
-                  size: 16, color: scheme.primary),
-              const SizedBox(width: 6),
-              Text(
-                '发现新版本 v${u.version}',
-                style: text.bodyMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: scheme.primary,
-                ),
-              ),
-            ],
-          ),
-          if (u.notes.trim().isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: SelectableText(
-                u.notes.trim(),
-                maxLines: 10,
-                style: text.bodySmall?.copyWith(height: 1.6),
-              ),
-            ),
-          ],
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              FilledButton.icon(
-                onPressed: u.setupUrl != null ? _upgrade : null,
-                icon: const Icon(Icons.download, size: 16),
-                label: const Text('立即升级'),
-              ),
-              const SizedBox(width: 8),
-              OutlinedButton(
-                onPressed: _openReleasePage,
-                child: const Text('查看发布页'),
-              ),
-              if (u.setupUrl == null)
-                Padding(
-                  padding: const EdgeInsets.only(left: 10),
-                  child: Text(
-                    '该版本未提供安装包，请前往发布页下载',
-                    style: text.bodySmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ];
-      case _UpdatePhase.downloading:
-        final u = _update;
-        return [
-          Text(
-            '正在下载 v${u?.version ?? ''} 安装包（${(_progress * 100).round()}%），'
-            '完成后将自动升级并重启应用。',
-            style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-          ),
-          const SizedBox(height: 8),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: LinearProgressIndicator(
-              value: _progress,
-              minHeight: 6,
-              backgroundColor:
-                  scheme.surfaceContainerHighest.withValues(alpha: 0.6),
-            ),
-          ),
-        ];
-      case _UpdatePhase.failed:
-        return [
-          Text(
-            _error ?? '检查更新失败',
-            style: text.bodySmall?.copyWith(color: scheme.error),
-          ),
-        ];
-    }
   }
 
   // ───────────────────────── 定位介绍 ─────────────────────────
