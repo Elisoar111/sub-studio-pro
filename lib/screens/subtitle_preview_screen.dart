@@ -68,7 +68,9 @@ class _SubtitlePreviewScreenState extends State<SubtitlePreviewScreen> {
       return;
     }
     try {
-      await Share.shareXFiles([XFile(path)]);
+      await SharePlus.instance.share(
+        ShareParams(files: [XFile(path)]),
+      );
     } catch (e) {
       if (mounted) showErrorSnack(context, e);
     }

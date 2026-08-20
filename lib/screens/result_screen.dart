@@ -76,7 +76,9 @@ class _ResultScreenState extends State<ResultScreen> {
       return;
     }
     try {
-      await Share.shareXFiles([XFile(widget.outputPath)]);
+      await SharePlus.instance.share(
+        ShareParams(files: [XFile(widget.outputPath)]),
+      );
     } catch (e) {
       if (mounted) showErrorSnack(context, e);
     }

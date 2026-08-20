@@ -23,8 +23,7 @@ dependencies:
   path: ^1.9.0
 
   # ── 文件选择（Windows 原生对话框）
-  # 注：8.0.x 与 share_plus 9.x 兼容（web 0.5），8.1+ 需要 web 1.0 会冲突
-  file_picker: ^8.0.7
+  file_picker: ^12.0.0
 
   # ── 拖拽导入（文件拖入窗口直接入列）
   # 注：desktop_drop ≥0.5.0 强制 web ^1.0（0.6+ 要 web ^1.1），与 share_plus 9.x
@@ -42,7 +41,8 @@ dependencies:
   media_kit_libs_video: ^1.0.5
 
   # ── 分享 / 结果导出（Windows 上 fallback 到另存为）
-  share_plus: ^9.0.0
+  # 注：13.x 与 file_picker 12.x 同步迁移（win32/web 版本约束耦合）
+  share_plus: ^13.3.0
   cross_file: ^0.3.4
 
   # ── 字符编码（GBK 字幕解码；BIG5 见下方内置说明）
@@ -60,6 +60,8 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
+  # 测试 fake FilePickerPlatform 用的 verifyToken 放行 mixin
+  plugin_platform_interface: ^2.1.7
 
 flutter:
   uses-material-design: true

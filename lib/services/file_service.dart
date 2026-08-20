@@ -108,16 +108,25 @@ class FileService {
     String? title,
   }) async {
     try {
-      final result = await FilePicker.platform.pickFiles(
+      // file_picker 12：pickFiles 恒为多选（返回列表），单选走 pickFile
+      if (multi) {
+        final files = await FilePicker.pickFiles(
+          type: FileType.custom,
+          allowedExtensions: exts,
+          dialogTitle: title,
+        );
+        return [
+          for (final f in files)
+            PickedFile(path: f.path, name: f.name, size: await f.length()),
+        ];
+      }
+      final f = await FilePicker.pickFile(
         type: FileType.custom,
         allowedExtensions: exts,
-        allowMultiple: multi,
         dialogTitle: title,
       );
-      if (result == null) return const [];
-      return result.files
-          .map((f) => PickedFile(path: f.path, name: f.name, size: f.size))
-          .toList();
+      if (f == null) return const [];
+      return [PickedFile(path: f.path, name: f.name, size: await f.length())];
     } catch (e) {
       Logger.instance.error('文件选择失败', e);
       rethrow;
@@ -127,7 +136,7 @@ class FileService {
   /// 选择目录（返回目录路径）。
   Future<String?> pickDirectory() async {
     try {
-      return await FilePicker.platform.getDirectoryPath(dialogTitle: '选择目录');
+      return await FilePicker.getDirectoryPath(dialogTitle: '选择目录');
     } catch (e) {
       Logger.instance.error('目录选择失败', e);
       return null;
@@ -137,13 +146,12 @@ class FileService {
   /// 选择可执行文件（用于设置页指定 FFmpeg / FFprobe 路径）。
   Future<String?> pickExecutable({String? title}) async {
     try {
-      final result = await FilePicker.platform.pickFiles(
+      final f = await FilePicker.pickFile(
         type: FileType.custom,
         allowedExtensions: const ['exe'],
-        allowMultiple: false,
         dialogTitle: title ?? '选择可执行文件',
       );
-      return result?.files.first.path;
+      return f?.path;
     } catch (e) {
       Logger.instance.error('选择可执行文件失败', e);
       return null;
@@ -152,38 +160,24 @@ class FileService {
 
   // ─────────────────────── 保存 ───────────────────────
 
-  /// 「另存为」对话框，返回目标路径（用户取消返回 null）。
-  Future<String?> saveFilePath({
-    String? suggestedName,
-    String? extension,
-  }) async {
-    try {
-      return await FilePicker.platform.saveFile(
-        dialogTitle: '保存到…',
-        fileName: suggestedName,
-        type: FileType.custom,
-        allowedExtensions: extension == null ? null : [extension],
-      );
-    } catch (e) {
-      Logger.instance.error('保存对话框失败', e);
-      return null;
-    }
-  }
-
-  /// 把磁盘文件复制到用户指定位置。
+  /// 「另存为」对话框并写入内容（file_picker 12 契约：saveFile 接收
+  /// 字节、由插件写盘，返回保存位置 Uri；用户取消返回 null）。
   Future<String?> copyToUserLocation(
     String srcPath, {
     String? suggestedName,
   }) async {
-    final ext = p.extension(srcPath).replaceFirst('.', '');
-    final dest = await saveFilePath(
-      suggestedName: suggestedName ?? p.basename(srcPath),
-      extension: ext,
-    );
-    if (dest == null) return null;
     try {
-      await File(srcPath).copy(dest);
-      return dest;
+      final bytes = await File(srcPath).readAsBytes();
+      final ext = p.extension(srcPath).replaceFirst('.', '');
+      final uri = await FilePicker.saveFile(
+        dialogTitle: '保存到…',
+        fileName: suggestedName ?? p.basename(srcPath),
+        type: FileType.custom,
+        allowedExtensions: ext.isEmpty ? null : [ext],
+        bytes: bytes,
+      );
+      if (uri == null) return null;
+      return uri.scheme == 'file' ? uri.toFilePath() : uri.toString();
     } catch (e) {
       Logger.instance.error('复制文件失败', e);
       rethrow;

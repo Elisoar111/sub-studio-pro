@@ -1,8 +1,11 @@
 import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:cross_file/cross_file.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import 'package:subtitle_studio_pro/screens/track_screen.dart';
 import 'package:subtitle_studio_pro/services/mkvtoolnix/mkvtoolnix_service.dart';
@@ -136,7 +139,7 @@ void main() {
 
   /// 注入视频路径并等真实 mkvmerge -J 探测完成（源轨道标题出现）。
   Future<void> addVideo(WidgetTester tester, String path) async {
-    FilePicker.platform = _FakePicker([path]);
+    FilePickerPlatform.instance = _FakePicker([path]);
     // 输入区的「添加视频」排在空态按钮之前
     await tester.tap(find.text('添加视频').first);
     await tester.pump();
@@ -248,42 +251,66 @@ void main() {
   });
 }
 
-class _FakePicker extends FilePicker {
+/// file_picker 12 注入缝：fake 平台接口实现（FilePicker 静态门面
+/// 委托 FilePickerPlatform.instance，fake 需混入 MockPlatformInterfaceMixin
+/// 才能通过 PlatformInterface.verifyToken）。
+class _FakePicker extends FilePickerPlatform with MockPlatformInterfaceMixin {
   _FakePicker(this.paths);
 
   final List<String> paths;
 
   @override
-  Future<FilePickerResult?> pickFiles({
+  Future<List<PlatformFile>> pickFiles({
     String? dialogTitle,
     String? initialDirectory,
     FileType type = FileType.any,
     List<String>? allowedExtensions,
     Function(FilePickerStatus)? onFileLoading,
-    bool allowCompression = true,
-    int compressionQuality = 30,
-    bool allowMultiple = false,
-    bool withData = false,
-    bool withReadStream = false,
-    bool lockParentWindow = false,
-    bool readSequential = false,
+    int compressionQuality = 0,
+    AndroidOptions androidOptions = const AndroidOptions(),
+    WindowsOptions windowsOptions = const WindowsOptions(),
+    LinuxOptions linuxOptions = const LinuxOptions(),
+    WebOptions webOptions = const WebOptions(),
   }) async =>
-      FilePickerResult([
-        for (final path in paths)
-          PlatformFile(
-            path: path,
-            name: path.split(RegExp(r'[\\/]')).last,
-            size: File(path).existsSync() ? File(path).lengthSync() : 0,
-          ),
-      ]);
+      [for (final path in paths) _FakePlatformFile(path)];
 
   @override
   Future<String?> getDirectoryPath({
     String? dialogTitle,
-    bool lockParentWindow = false,
     String? initialDirectory,
+    AndroidOptions androidOptions = const AndroidOptions(),
+    WindowsOptions windowsOptions = const WindowsOptions(),
+    LinuxOptions linuxOptions = const LinuxOptions(),
+    WebOptions webOptions = const WebOptions(),
   }) async =>
       null;
+}
+
+/// 本地磁盘文件的 PlatformFile 最小实现（v12 起为抽象类，不可直接构造）。
+base class _FakePlatformFile extends PlatformFile {
+  _FakePlatformFile(this.filePath);
+
+  final String filePath;
+
+  @override
+  String get name => filePath.split(RegExp(r'[\\/]')).last;
+
+  @override
+  Uri get uri => Uri.file(filePath);
+
+  @override
+  XFile get xFile => XFile(filePath);
+
+  @override
+  Future<int> length() async =>
+      File(filePath).existsSync() ? File(filePath).lengthSync() : 0;
+
+  @override
+  Future<Uint8List> readAsBytes() => File(filePath).readAsBytes();
+
+  @override
+  Stream<Uint8List> readAsByteStream() =>
+      File(filePath).openRead().cast<Uint8List>();
 }
 
 extension<T> on Iterable<T> {
