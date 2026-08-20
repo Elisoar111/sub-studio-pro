@@ -1,6 +1,6 @@
 # Subtitle Studio Pro —— 优化与更新计划
 
-> 更新：2026-08-20。v1.3（深化与债务清理）功能项已全部落地（术语表旁车 / 自定义润色指令 / whisper.cpp 实验后端），依赖大迁移进行中，本文档反映当前现状与后续路线。
+> 更新：2026-08-20。v1.3（深化与债务清理）已全部完成：术语表旁车 / 自定义润色指令 / whisper.cpp 实验后端 / 大版本依赖迁移（file_picker 12、share_plus 13、window_manager 0.5、riverpod 3，连带 desktop_drop 0.7、media_kit 1.2+）。本文档反映当前现状与后续路线。
 
 
 
@@ -11,7 +11,7 @@
 | 1 | **术语表旁车文件化** | `.glossary.json` 跟随项目/目录，多任务共享词库；UI 导入导出 | 中 | ✅ 完成 |
 | 2 | **自定义润色指令** | 设置页可编辑润色 system prompt 附加段（如「保留口语语气词」） | 小 | ✅ 完成 |
 | 3 | **whisper.cpp 实验性后端** | v1.2 已交付评估结论；v1.3 做实验性枚举项（默认隐藏，检测到可执行文件才显示） | 中 | ✅ 完成（`-m/-f/-osrt/-of/-ng` 参数映射，ggml 模型名自动转换，预设/提示词不适用） |
-| 5 | **大版本依赖迁移** | file_picker 8→12、share_plus 9→13、window_manager 0.3→0.5、riverpod 2→3（破坏性变更，单独分支逐个迁移，每步全量测试）；连带 desktop_drop 0.4→0.7、media_kit 1.1→1.2+（web 约束解绑后随迁） | 大 | 🚧 进行中 |
+| 5 | **大版本依赖迁移** | file_picker 8→12、share_plus 9→13、window_manager 0.3→0.5、riverpod 2→3（破坏性变更，逐个提交迁移，每步全量测试）；连带 desktop_drop 0.4→0.7、media_kit 1.1→1.2+（web 约束解绑后随迁） | 大 | ✅ 完成（file_picker 与 share_plus 因 win32 约束耦合同步迁移；全量测试 250/250） |
 
 ---
 
