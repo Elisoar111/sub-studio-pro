@@ -427,6 +427,44 @@ class TaskRunner {
       // 进度切分：润色开启时翻译占 0–0.6、润色 0.6–end；关闭时翻译直达 end
       final endAt = mixedOut.isEmpty ? 1.0 : 0.95;
       final translateEnd = doPolish ? 0.6 : endAt;
+      // 实时直播（v2.2）：服务层事件 → task 直播字段，驱动翻译页面板
+      var lastLiveNotify = 0;
+      void onLiveEvent(TranslateEvent e) {
+        switch (e.kind) {
+          case TranslateEventKind.thinking:
+            task.liveThinking += e.text;
+            if (task.liveThinking.length > 4000) {
+              task.liveThinking = task.liveThinking
+                  .substring(task.liveThinking.length - 4000);
+            }
+            // 思考增量高频到达：120ms 节流刷新
+            final now = DateTime.now().millisecondsSinceEpoch;
+            if (now - lastLiveNotify >= 120) {
+              lastLiveNotify = now;
+              notify();
+            }
+          case TranslateEventKind.batchStart:
+            task.liveThinking = '';
+            task.liveLines.add(
+                '${e.tag}批次 ${e.batchIndex + 1}/${e.batchTotal}：${_livePreview(e.text)}');
+            _trimLiveLines(task);
+            notify();
+          case TranslateEventKind.batchDone:
+            final first = e.pairs.isEmpty
+                ? ''
+                : '（${_livePreview(e.pairs.first[0])} → ${_livePreview(e.pairs.first[1])}）';
+            task.liveLines.add(
+                '${e.tag}批次 ${e.batchIndex + 1}/${e.batchTotal} 完成$first');
+            _trimLiveLines(task);
+            notify();
+          case TranslateEventKind.retry:
+            task.liveLines.add(
+                '${e.tag}批次 ${e.batchIndex + 1}/${e.batchTotal} ${e.text}');
+            _trimLiveLines(task);
+            notify();
+        }
+      }
+
       var translated = await TranslationService.instance.translateDocument(
         doc,
         config: config,
@@ -435,6 +473,7 @@ class TaskRunner {
         glossary: GlossaryStore.mergedFor(input, settings.glossary),
         checkpointPath: TranslateCheckpoint.pathFor(output),
         checkpointMtimeMs: inputMtime,
+        onEvent: onLiveEvent,
         onProgress: (frac) {
           task.progress = frac * translateEnd;
           notify();
@@ -447,6 +486,7 @@ class TaskRunner {
           config: config,
           target: target,
           customRules: settings.polishCustomRules,
+          onEvent: onLiveEvent,
           onProgress: (frac) {
             task.progress = 0.6 + frac * (endAt - 0.6);
             notify();
@@ -485,6 +525,19 @@ class TaskRunner {
       return const TaskRunResult(success: false, cancelled: true);
     } catch (e) {
       return TaskRunResult(success: false, error: '$e');
+    }
+  }
+
+  /// 直播行预览：去换行、去首尾空白、限长 24 字符。
+  static String _livePreview(String s) {
+    final t = s.replaceAll('\n', ' ').replaceAll('\r', '').trim();
+    return t.length <= 24 ? t : '${t.substring(0, 24)}…';
+  }
+
+  /// 直播事件行只保留尾部 30 条（与模型层注释约定一致）。
+  static void _trimLiveLines(QueueTask task) {
+    if (task.liveLines.length > 30) {
+      task.liveLines.removeRange(0, task.liveLines.length - 30);
     }
   }
 

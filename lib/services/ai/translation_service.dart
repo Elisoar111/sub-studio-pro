@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
 import '../../core/utils/logger.dart';
@@ -139,6 +140,55 @@ typedef ChatFn = Future<String> Function({
   required String user,
 });
 
+/// 测试连接结果（设置页「测试连接」按钮）。
+class TestConnectionResult {
+  final bool ok;
+  final int latencyMs;
+
+  /// 成功时模型回复原文（截断展示用）。
+  final String reply;
+
+  /// 失败时的错误摘要。
+  final String error;
+
+  const TestConnectionResult({
+    required this.ok,
+    this.latencyMs = 0,
+    this.reply = '',
+    this.error = '',
+  });
+}
+
+/// 翻译过程中的实时事件种类（翻译页直播面板）。
+enum TranslateEventKind { batchStart, batchDone, thinking, retry }
+
+/// 单个实时翻译事件。
+class TranslateEvent {
+  final TranslateEventKind kind;
+
+  /// 阶段标签（'翻译' / '润色'）。
+  final String tag;
+
+  /// 0-based 批次索引。
+  final int batchIndex;
+  final int batchTotal;
+
+  /// batchStart：本批首行预览；thinking：reasoning 增量；retry：错误摘要。
+  final String text;
+
+  /// batchDone：前 3 条 [原文, 译文] 预览对；其余事件为空列表。
+  final List<List<String>> pairs;
+
+  const TranslateEvent({
+    required this.kind,
+    required this.tag,
+    required this.batchIndex,
+    required this.batchTotal,
+    this.text = '',
+    this.pairs = const [],
+  });
+}
+
 /// 翻译断点：记录已成功批次的译文，失败 / 取消后重跑同任务时
 /// 跳过这些批次（校验 cueCount + 输入 mtime + 目标语言全一致才复用）。
 class TranslateCheckpoint {
@@ -230,6 +280,76 @@ class TranslationService {
   /// 批间上下文携带条数（前批尾部）。
   static const _contextTail = 3;
 
+  // ───────────────────────── 测试连接（设置页） ─────────────────────────
+
+  /// 发送最小 chat 请求验证 AI 配置可用：成功返回延迟与模型回复，
+  /// 失败返回错误摘要（不抛异常，供设置页直接展示）。
+  Future<TestConnectionResult> testConnection(
+    AiApiConfig config, {
+    ChatFn? chatOverride,
+  }) async {
+    final override = testConnectionOverride;
+    if (override != null) return override(config);
+    if (!config.isReady) {
+      return const TestConnectionResult(
+          ok: false, error: 'AI 翻译未配置：请先填写 API Key / BaseURL / 模型');
+    }
+    final sw = Stopwatch()..start();
+    try {
+      final reply = chatOverride != null
+          ? await chatOverride(system: 'You are a connectivity probe.',
+              user: 'ping')
+          : await _chat(config,
+              system: 'You are a connectivity probe.', user: 'ping');
+      return TestConnectionResult(
+        ok: true,
+        latencyMs: sw.elapsedMilliseconds,
+        reply: reply.trim(),
+      );
+    } catch (e) {
+      return TestConnectionResult(
+        ok: false,
+        latencyMs: sw.elapsedMilliseconds,
+        error: '$e',
+      );
+    }
+  }
+
+  /// 测试注入口：设置页「测试连接」按钮（widget 测试替代真实 HTTP）。
+  @visibleForTesting
+  static Future<TestConnectionResult> Function(AiApiConfig config)?
+      testConnectionOverride;
+
+  /// 测试注入口：设置页「获取模型」按钮（widget 测试替代真实 HTTP）。
+  @visibleForTesting
+  static Future<List<String>> Function(AiApiConfig config)?
+      listModelsOverride;
+
+  /// 解析单个 SSE data 载荷（已去掉 `data:` 前缀）：返回该 chunk 的
+  /// content / reasoning 增量；`[DONE]`、空 choices（usage 尾包）或
+  /// 非 JSON 载荷返回 null（跳过，不视为错误）。
+  static ({String reasoning, String content})? parseSseDelta(String payload) {
+    if (payload.trim() == '[DONE]') return null;
+    final dynamic decoded;
+    try {
+      decoded = jsonDecode(payload);
+    } catch (_) {
+      return null;
+    }
+    if (decoded is! Map) return null;
+    final choices = decoded['choices'];
+    if (choices is! List || choices.isEmpty) return null;
+    final delta = (choices.first as Map)['delta'];
+    if (delta is! Map) return null;
+    final content = delta['content'];
+    final reasoning = delta['reasoning_content'];
+    if (content is! String && reasoning is! String) return null;
+    return (
+      reasoning: reasoning is String ? reasoning : '',
+      content: content is String ? content : '',
+    );
+  }
+
   /// 把扁平译文按批次尺寸切回嵌套结构（checkpoint 落盘用）。
   static List<List<String>> _splitByBatchSizes(
     List<String> flat,
@@ -250,12 +370,14 @@ class TranslationService {
   /// [chatOverride]：测试注入缝（替代真实 HTTP，不发请求）。
   /// [checkpointPath]/[checkpointMtimeMs]：断点续传——已成功批次落盘，
   /// 失败/取消后重跑同任务跳过这些批次；全部成功后删除 checkpoint。
+  /// [onEvent]：实时事件流（批次开始/完成、思考增量、重试）。
   Future<SubtitleDocument> translateDocument(
     SubtitleDocument doc, {
     required AiApiConfig config,
     required TranslateLanguage target,
     List<GlossaryTerm> glossary = const [],
     void Function(double progress)? onProgress,
+    void Function(TranslateEvent event)? onEvent,
     bool Function()? shouldCancel,
     ChatFn? chatOverride,
     String? checkpointPath,
@@ -317,10 +439,35 @@ class TranslationService {
       }
       final batch = batches[b];
       final lines = [for (final c in batch) c.rawText];
+      onEvent?.call(TranslateEvent(
+        kind: TranslateEventKind.batchStart,
+        tag: '翻译',
+        batchIndex: b,
+        batchTotal: batches.length,
+        text: lines.first,
+      ));
       final results = await _translateBatch(lines, config, target,
           glossary: glossary,
           context: context.isEmpty ? null : context,
-          chatOverride: chatOverride);
+          chatOverride: chatOverride,
+          onThinking: onEvent == null
+              ? null
+              : (delta) => onEvent(TranslateEvent(
+                    kind: TranslateEventKind.thinking,
+                    tag: '翻译',
+                    batchIndex: b,
+                    batchTotal: batches.length,
+                    text: delta,
+                  )),
+          onRetry: onEvent == null
+              ? null
+              : (attempt, error) => onEvent(TranslateEvent(
+                    kind: TranslateEventKind.retry,
+                    tag: '翻译',
+                    batchIndex: b,
+                    batchTotal: batches.length,
+                    text: '第 $attempt 次重试：$error',
+                  )));
       final finals = [
         for (var i = 0; i < batch.length; i++)
           results[i].trim().isEmpty ? batch[i].rawText : results[i].trim(),
@@ -334,6 +481,16 @@ class TranslationService {
           batches: _splitByBatchSizes(translated, batches),
         ).save(checkpointPath);
       }
+      onEvent?.call(TranslateEvent(
+        kind: TranslateEventKind.batchDone,
+        tag: '翻译',
+        batchIndex: b,
+        batchTotal: batches.length,
+        pairs: [
+          for (var i = 0; i < finals.length && i < 3; i++)
+            [lines[i], finals[i]],
+        ],
+      ));
       // 滚动更新上下文（尾部最多 3 条）
       final pairs = [
         for (var i = 0; i < lines.length; i++) [lines[i], finals[i]],
@@ -373,6 +530,7 @@ class TranslationService {
     required TranslateLanguage target,
     String customRules = '',
     void Function(double progress)? onProgress,
+    void Function(TranslateEvent event)? onEvent,
     bool Function()? shouldCancel,
     ChatFn? chatOverride,
   }) async {
@@ -383,6 +541,7 @@ class TranslationService {
     if (cues.isEmpty) return doc;
 
     final system = polishSystemPrompt(target, customRules: customRules);
+    final total = (cues.length / batchSize).ceil();
     final polished = <String>[];
     for (var i = 0; i < cues.length; i += batchSize) {
       if (shouldCancel?.call() ?? false) {
@@ -393,15 +552,51 @@ class TranslationService {
         i + batchSize > cues.length ? cues.length : i + batchSize,
       );
       final lines = [for (final c in batch) c.rawText];
+      final b = i ~/ batchSize;
+      onEvent?.call(TranslateEvent(
+        kind: TranslateEventKind.batchStart,
+        tag: '润色',
+        batchIndex: b,
+        batchTotal: total,
+        text: lines.first,
+      ));
       final results = await _chatBatch(lines, config,
           system: system,
           user: translateUserPayload(lines),
           tag: '润色',
-          chatOverride: chatOverride);
+          chatOverride: chatOverride,
+          onThinking: onEvent == null
+              ? null
+              : (delta) => onEvent(TranslateEvent(
+                    kind: TranslateEventKind.thinking,
+                    tag: '润色',
+                    batchIndex: b,
+                    batchTotal: total,
+                    text: delta,
+                  )),
+          onRetry: onEvent == null
+              ? null
+              : (attempt, error) => onEvent(TranslateEvent(
+                    kind: TranslateEventKind.retry,
+                    tag: '润色',
+                    batchIndex: b,
+                    batchTotal: total,
+                    text: '第 $attempt 次重试：$error',
+                  )));
       polished.addAll([
         for (var k = 0; k < batch.length; k++)
           results[k].trim().isEmpty ? batch[k].rawText : results[k].trim(),
       ]);
+      onEvent?.call(TranslateEvent(
+        kind: TranslateEventKind.batchDone,
+        tag: '润色',
+        batchIndex: b,
+        batchTotal: total,
+        pairs: [
+          for (var k = 0; k < batch.length && k < 3; k++)
+            [lines[k], polished[i + k]],
+        ],
+      ));
       onProgress?.call(polished.length / cues.length);
     }
 
@@ -522,6 +717,8 @@ class TranslationService {
     List<GlossaryTerm> glossary = const [],
     List<List<String>>? context,
     ChatFn? chatOverride,
+    void Function(String reasoningDelta)? onThinking,
+    void Function(int attempt, String error)? onRetry,
   }) =>
       _chatBatch(
         lines,
@@ -530,6 +727,8 @@ class TranslationService {
         user: translateUserPayload(lines, context: context),
         tag: '翻译',
         chatOverride: chatOverride,
+        onThinking: onThinking,
+        onRetry: onRetry,
       );
 
   /// 带重试的单批 chat 调用：请求 + 解析 JSON 数组（翻译/润色共用）。
@@ -540,6 +739,8 @@ class TranslationService {
     required String user,
     required String tag,
     ChatFn? chatOverride,
+    void Function(String reasoningDelta)? onThinking,
+    void Function(int attempt, String error)? onRetry,
   }) async {
     const retries = 2;
     Object? lastError;
@@ -550,10 +751,12 @@ class TranslationService {
       try {
         final content = chatOverride != null
             ? await chatOverride(system: system, user: user)
-            : await _chat(config, system: system, user: user);
+            : await _chat(config,
+                system: system, user: user, onThinking: onThinking);
         return _parseArray(content, lines.length);
       } catch (e) {
         lastError = e;
+        onRetry?.call(attempt, '$e');
         Logger.instance.log('$tag批次失败（第 $attempt 次重试）：$e', tag: 'AI');
       }
     }
@@ -582,6 +785,7 @@ class TranslationService {
     AiApiConfig config, {
     required String system,
     required String user,
+    void Function(String reasoningDelta)? onThinking,
   }) async {
     final uri = Uri.parse(config.chatCompletionsUrl);
     HttpClient? client;
@@ -597,12 +801,22 @@ class TranslationService {
       req.add(utf8.encode(jsonEncode({
         'model': config.model,
         'temperature': 0.3,
+        // 流式请求：reasoning 模型的思考增量（delta.reasoning_content）
+        // 可实时回调 [onThinking]；不支持流式的服务商仍返回完整 JSON，
+        // 下方按 Content-Type 分流兼容。
+        'stream': true,
         'messages': [
           {'role': 'system', 'content': system},
           {'role': 'user', 'content': user},
         ],
       })));
       final res = await req.close().timeout(_httpTimeout);
+      final contentType = res.headers.value(HttpHeaders.contentTypeHeader) ?? '';
+      if (contentType.contains('text/event-stream')) {
+        return await _readSse(res, onThinking: onThinking);
+      }
+      // 非 SSE（服务商忽略 stream 参数）：整包 JSON，兼容读取
+      // message.reasoning_content（DeepSeek R1 系非流式也返回该字段）。
       // 读 body 同样要超时：连接半开/服务端停滞时 join() 会永久挂起，
       // 卡死串行队列且取消（批间检查）无法生效
       final body = await res
@@ -617,12 +831,58 @@ class TranslationService {
       if (choices is List && choices.isNotEmpty) {
         final msg = (choices.first as Map)['message'];
         final content = msg is Map ? msg['content'] : null;
+        final reasoning = msg is Map ? msg['reasoning_content'] : null;
+        if (reasoning is String && reasoning.isNotEmpty) {
+          onThinking?.call(reasoning);
+        }
         if (content is String && content.trim().isNotEmpty) return content;
       }
       throw const FormatException('响应中无译文内容');
     } finally {
       client?.close();
     }
+  }
+
+  /// 读取 SSE 流式响应：逐行解析 `data:` 载荷，累积 content 返回；
+  /// reasoning 增量实时回调 [onThinking]。行级超时防服务端停滞挂起。
+  Future<String> _readSse(
+    HttpClientResponse res, {
+    void Function(String reasoningDelta)? onThinking,
+  }) async {
+    final content = StringBuffer();
+    final dataBuf = <String>[];
+
+    void handlePayload(String payload) {
+      final delta = parseSseDelta(payload);
+      if (delta == null) return;
+      if (delta.reasoning.isNotEmpty) onThinking?.call(delta.reasoning);
+      if (delta.content.isNotEmpty) content.write(delta.content);
+    }
+
+    final lines = res
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .timeout(_httpTimeout);
+    await for (final line in lines) {
+      if (line.isEmpty) {
+        // 空行 = SSE 事件边界；多行 data: 拼接为一个载荷
+        if (dataBuf.isNotEmpty) {
+          handlePayload(dataBuf.join('\n'));
+          dataBuf.clear();
+        }
+        continue;
+      }
+      if (line.startsWith('data:')) {
+        dataBuf.add(line.substring(5).trimLeft());
+      }
+      // 其余 SSE 字段（event:/id:/注释行）忽略
+    }
+    if (dataBuf.isNotEmpty) handlePayload(dataBuf.join('\n'));
+    final text = content.toString();
+    if (text.trim().isEmpty) {
+      throw const FormatException('流式响应中无译文内容');
+    }
+    return text;
   }
 
   static String _brief(String s) =>
@@ -645,6 +905,8 @@ class TranslationService {
 
   /// 按当前配置从服务商拉取可用模型列表（GET /models）。
   Future<List<String>> listModels(AiApiConfig config) async {
+    final override = listModelsOverride;
+    if (override != null) return override(config);
     if (config.apiKey.trim().isEmpty || config.baseUrl.trim().isEmpty) {
       throw StateError('请先填写 API Key 与 BaseURL');
     }

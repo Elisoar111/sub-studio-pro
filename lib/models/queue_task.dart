@@ -62,6 +62,13 @@ class QueueTask {
   String? outputPath;
   String? error;
 
+  /// 实时直播（v2.2，瞬时态不序列化）：当前批次的思考流
+  /// （reasoning 模型 delta.reasoning_content 增量累积）。
+  String liveThinking = '';
+
+  /// 实时直播：最近事件行（批次开始/完成/重试，保留尾部 30 条）。
+  final List<String> liveLines = [];
+
   final DateTime createdAt;
   DateTime? startedAt;
   DateTime? finishedAt;

@@ -47,6 +47,31 @@ class _TranslateScreenState extends State<TranslateScreen> {
   /// 自定义输出目录（null = 与各源文件同目录）
   String? _outputDir;
 
+  @override
+  void initState() {
+    super.initState();
+    // 直播面板数据源：队列通知驱动重绘（思考流已在 runner 侧 120ms 节流）
+    QueueService.instance.addListener(_onQueueChanged);
+  }
+
+  @override
+  void dispose() {
+    QueueService.instance.removeListener(_onQueueChanged);
+    super.dispose();
+  }
+
+  void _onQueueChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// 直播面板展示对象：队列中未完成的翻译任务（最多 3 条）。
+  List<QueueTask> get _liveTasks => QueueService.instance.tasks
+      .where((t) =>
+          t.type == TaskType.subtitleTranslate &&
+          (t.status == TaskStatus.pending || t.status == TaskStatus.running))
+      .take(3)
+      .toList();
+
   Future<void> _pickFiles() async {
     try {
       final picked = await FileService.instance.pickSubtitles(multi: true);
@@ -125,8 +150,9 @@ class _TranslateScreenState extends State<TranslateScreen> {
     }
     q.start();
     if (!mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const TaskQueueScreen()),
+    // v2.2：留在翻译页看实时进度（直播面板），不再自动跳队列
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('已加入队列（${_files.length} 个文件），实时进度见下方「翻译进度」')),
     );
   }
 
@@ -308,11 +334,105 @@ class _TranslateScreenState extends State<TranslateScreen> {
               icon: const Icon(Icons.translate),
               label: Text('开始翻译（${_files.length} 个文件）'),
             ),
+            if (_liveTasks.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _livePanel(scheme),
+            ],
           ],
         ),
       ),
     );
   }
+
+  /// 直播面板（v2.2）：进行中翻译任务的实时思考流与事件行。
+  Widget _livePanel(ColorScheme scheme) {
+    return SectionCard(
+      title: '翻译进度',
+      icon: Icons.monitor_heart_outlined,
+      trailing: TextButton(
+        onPressed: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const TaskQueueScreen()),
+        ),
+        child: const Text('查看队列'),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final t in _liveTasks) ...[
+            Row(
+              children: [
+                Icon(
+                  t.status == TaskStatus.running
+                      ? Icons.sync
+                      : Icons.schedule,
+                  size: 16,
+                  color: t.status == TaskStatus.running
+                      ? scheme.primary
+                      : scheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    t.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+                Text(
+                  t.statusLabel,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                ),
+              ],
+            ),
+            if (t.status == TaskStatus.running) ...[
+              const SizedBox(height: 4),
+              LinearProgressIndicator(
+                value: t.progress <= 0 ? null : t.progress,
+                minHeight: 3,
+              ),
+            ],
+            if (t.liveThinking.trim().isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  '思考：${_tailOf(t.liveThinking, 400)}',
+                  maxLines: 4,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontFamily: 'Consolas',
+                    fontSize: 12,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            for (final line in _tailOfList(t.liveLines, 6))
+              Text(
+                line,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontFamily: 'Consolas',
+                  fontSize: 12,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            const Divider(height: 16),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// 取字符串尾部（直播思考流只显示最新片段）。
+  static String _tailOf(String s, int max) =>
+      s.length <= max ? s : s.substring(s.length - max);
+
+  /// 取列表尾部 n 条（直播事件行只显示最近若干条）。
+  static List<String> _tailOfList(List<String> list, int n) =>
+      list.length <= n ? list : list.sublist(list.length - n);
 
   /// 术语表编辑对话框：原文 / 译文两列，译文留空 = 保留原文不译。
   Future<void> _openGlossaryDialog() async {

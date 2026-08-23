@@ -3,14 +3,14 @@
 ; 本地编译（需先 flutter build windows --release）：
 ;   "D:\Program Files\Inno Setup 7\ISCC.exe" installer\subtitle-studio-pro.iss
 ; CI 编译（覆盖版本号与构建目录，均传绝对路径）：
-;   ISCC /DAppVersion=2.1.1 /DAppBuildDir=<repo>\build\windows\x64\runner\Release installer\subtitle-studio-pro.iss
+;   ISCC /DAppVersion=2.2.0 /DAppBuildDir=<repo>\build\windows\x64\runner\Release installer\subtitle-studio-pro.iss
 ;
 ; 产物：installer\dist\SubtitleStudioPro-<版本>-setup.exe
 
 #define AppName "Subtitle Studio Pro"
 #define AppExeName "subtitle_studio_pro.exe"
 #ifndef AppVersion
-#define AppVersion "2.1.1"
+#define AppVersion "2.2.0"
 #endif
 ; 相对路径相对本脚本目录（installer\）；CI 传绝对路径覆盖
 #ifndef AppBuildDir

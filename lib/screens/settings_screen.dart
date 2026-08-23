@@ -10,6 +10,7 @@ import '../core/theme.dart';
 import '../core/utils/filename_template.dart';
 import '../core/utils/reveal_file.dart';
 import '../providers/app_providers.dart';
+import '../services/ai/translation_service.dart';
 import '../services/file_service.dart';
 import '../services/ffmpeg/ffmpeg_service.dart';
 import '../services/logging/debug_bundle.dart';
@@ -74,6 +75,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   /// 润色模式自定义附加指令（v1.3，空 = 仅内置规则）
   late final TextEditingController _polishRulesCtrl = TextEditingController(
       text: SettingsProvider.instance.polishCustomRules);
+
+  /// v2.2：「获取模型」拉取的模型列表（下拉数据源）。
+  List<String> _models = [];
+  bool _fetchingModels = false;
+  bool _testingConnection = false;
 
   late final TextEditingController _mkvDirCtrl = TextEditingController(
       text: StorageService.instance.getSetting(StorageService.kMkvtoolnixDir));
@@ -1488,15 +1494,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const SizedBox(height: 10),
           TextField(
-            controller: _aiModelCtrl,
-            decoration: const InputDecoration(
-              labelText: '模型',
-              hintText: 'gpt-4o-mini / deepseek-chat / …',
-              prefixIcon: Icon(Icons.memory),
-            ),
-          ),
-          const SizedBox(height: 10),
-          TextField(
             controller: _aiKeyCtrl,
             obscureText: true,
             decoration: const InputDecoration(
@@ -1504,6 +1501,48 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               hintText: 'sk-…',
               prefixIcon: Icon(Icons.key),
             ),
+          ),
+          const SizedBox(height: 10),
+          // v2.2：模型改为「获取模型」+ 下拉选择（删除手填）
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  initialValue: _modelDropdownValue,
+                  items: [
+                    for (final m in _modelItems)
+                      DropdownMenuItem(
+                        value: m,
+                        child: Text(m,
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                      ),
+                  ],
+                  onChanged: (v) =>
+                      setState(() => _aiModelCtrl.text = v ?? ''),
+                  decoration: const InputDecoration(
+                    labelText: '模型',
+                    hintText: '点击「获取模型」拉取列表',
+                    prefixIcon: Icon(Icons.memory),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: OutlinedButton.icon(
+                  onPressed: _fetchingModels ? null : _fetchModels,
+                  icon: _fetchingModels
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh, size: 18),
+                  label: const Text('获取模型'),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 10),
           TextField(
@@ -1531,30 +1570,108 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
           ),
           const SizedBox(height: 10),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: FilledButton.tonalIcon(
-              onPressed: () async {
-                await SettingsProvider.instance.setAiConfig(
-                  apiKey: _aiKeyCtrl.text,
-                  baseUrl: _aiUrlCtrl.text,
-                  model: _aiModelCtrl.text,
-                );
-                await SettingsProvider.instance
-                    .setPolishCustomRules(_polishRulesCtrl.text);
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('AI 翻译配置已保存')),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilledButton.tonalIcon(
+                onPressed: () async {
+                  await SettingsProvider.instance.setAiConfig(
+                    apiKey: _aiKeyCtrl.text,
+                    baseUrl: _aiUrlCtrl.text,
+                    model: _aiModelCtrl.text,
                   );
-                }
-              },
-              icon: const Icon(Icons.check, size: 18),
-              label: const Text('保存配置'),
-            ),
+                  await SettingsProvider.instance
+                      .setPolishCustomRules(_polishRulesCtrl.text);
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('AI 翻译配置已保存')),
+                    );
+                  }
+                },
+                icon: const Icon(Icons.check, size: 18),
+                label: const Text('保存配置'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _testingConnection ? null : _testConnection,
+                icon: _testingConnection
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.network_check, size: 18),
+                label: const Text('测试连接'),
+              ),
+            ],
           ),
         ],
       ),
     );
+  }
+
+  /// 下拉数据源：已保存模型（即使不在拉取列表中也保留可选）+ 拉取结果。
+  List<String> get _modelItems {
+    final current = _aiModelCtrl.text.trim();
+    return [
+      if (current.isNotEmpty && !_models.contains(current)) current,
+      ..._models,
+    ];
+  }
+
+  String? get _modelDropdownValue {
+    final current = _aiModelCtrl.text.trim();
+    return current.isEmpty ? null : current;
+  }
+
+  /// v2.2：按当前填写的 BaseURL + Key 拉取模型列表。
+  Future<void> _fetchModels() async {
+    final config = AiApiConfig(
+      baseUrl: _aiUrlCtrl.text,
+      apiKey: _aiKeyCtrl.text,
+      model: _aiModelCtrl.text,
+    );
+    setState(() => _fetchingModels = true);
+    try {
+      final models = await TranslationService.instance.listModels(config);
+      if (!mounted) return;
+      setState(() => _models = models);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(models.isEmpty ? '服务商未返回任何模型' : '已获取 ${models.length} 个模型'),
+        ),
+      );
+    } catch (e) {
+      if (mounted) showErrorSnack(context, '获取模型失败：$e');
+    } finally {
+      if (mounted) setState(() => _fetchingModels = false);
+    }
+  }
+
+  /// v2.2：发送最小 chat 请求验证当前 AI 配置可用。
+  Future<void> _testConnection() async {
+    final config = AiApiConfig(
+      baseUrl: _aiUrlCtrl.text,
+      apiKey: _aiKeyCtrl.text,
+      model: _aiModelCtrl.text,
+    );
+    setState(() => _testingConnection = true);
+    try {
+      final r = await TranslationService.instance.testConnection(config);
+      if (!mounted) return;
+      final reply = r.reply.length > 60
+          ? '${r.reply.substring(0, 60)}…'
+          : r.reply;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(r.ok
+              ? '连接成功（${r.latencyMs} ms）：$reply'
+              : '连接失败：${r.error}'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _testingConnection = false);
+    }
   }
 
   Widget _statusChip(SettingsProvider settings) {
