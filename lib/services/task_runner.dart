@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:uuid/uuid.dart';
 
 import '../core/utils/logger.dart';
+import '../models/ai_profile.dart';
 import '../models/encode_options.dart';
 import '../models/mux_track.dart';
 import '../models/queue_task.dart';
@@ -12,6 +13,7 @@ import '../models/subtitle.dart';
 import '../models/task_params.dart';
 import '../providers/app_providers.dart';
 import 'ai/glossary_store.dart';
+import 'ai/translation_cache.dart';
 import 'ai/translation_service.dart';
 import 'ffmpeg/ffmpeg_runner.dart';
 import 'ffmpeg/ffmpeg_service.dart';
@@ -429,7 +431,28 @@ class TaskRunner {
       final translateEnd = doPolish ? 0.6 : endAt;
       // 实时直播（v2.2）：服务层事件 → task 直播字段，驱动翻译页面板
       var lastLiveNotify = 0;
+      // v2.2.1：usage 尾包（每批一次，低频直接刷新）累计进任务
+      void onUsage(AiUsage u) {
+        task.usagePromptTokens += u.promptTokens;
+        task.usageCompletionTokens += u.completionTokens;
+        task.usageTotalTokens += u.totalTokens;
+        notify();
+      }
+
+      // v2.2.1 翻译缓存：行哈希→译文，跨文件复用（path_provider 不可用时为 null）
+      final cache = await TranslationCache.openDefault();
+
       void onLiveEvent(TranslateEvent e) {
+        // 思考 / 译文增量高频到达：共用 120ms 节流刷新
+        final now = DateTime.now().millisecondsSinceEpoch;
+        bool shouldThrottleNotify() {
+          if (now - lastLiveNotify >= 120) {
+            lastLiveNotify = now;
+            return true;
+          }
+          return false;
+        }
+
         switch (e.kind) {
           case TranslateEventKind.thinking:
             task.liveThinking += e.text;
@@ -437,14 +460,17 @@ class TaskRunner {
               task.liveThinking = task.liveThinking
                   .substring(task.liveThinking.length - 4000);
             }
-            // 思考增量高频到达：120ms 节流刷新
-            final now = DateTime.now().millisecondsSinceEpoch;
-            if (now - lastLiveNotify >= 120) {
-              lastLiveNotify = now;
-              notify();
+            if (shouldThrottleNotify()) notify();
+          case TranslateEventKind.delta:
+            task.liveTranslating += e.text;
+            if (task.liveTranslating.length > 8000) {
+              task.liveTranslating = task.liveTranslating
+                  .substring(task.liveTranslating.length - 8000);
             }
+            if (shouldThrottleNotify()) notify();
           case TranslateEventKind.batchStart:
             task.liveThinking = '';
+            task.liveTranslating = '';
             task.liveLines.add(
                 '${e.tag}批次 ${e.batchIndex + 1}/${e.batchTotal}：${_livePreview(e.text)}');
             _trimLiveLines(task);
@@ -465,34 +491,63 @@ class TaskRunner {
         }
       }
 
-      var translated = await TranslationService.instance.translateDocument(
-        doc,
-        config: config,
-        target: target,
-        // 全局词库 + 字幕目录旁车 .glossary.json（旁车同 source 优先）
-        glossary: GlossaryStore.mergedFor(input, settings.glossary),
-        checkpointPath: TranslateCheckpoint.pathFor(output),
-        checkpointMtimeMs: inputMtime,
-        onEvent: onLiveEvent,
-        onProgress: (frac) {
-          task.progress = frac * translateEnd;
-          notify();
-        },
-        shouldCancel: () => token.isCancelled,
-      );
-      if (doPolish) {
-        translated = await TranslationService.instance.polishDocument(
-          translated,
-          config: config,
+      Future<SubtitleDocument> runPipeline(AiApiConfig c) async {
+        var t = await TranslationService.instance.translateDocument(
+          doc,
+          config: c,
           target: target,
-          customRules: settings.polishCustomRules,
+          // 全局词库 + 字幕目录旁车 .glossary.json（旁车同 source 优先）
+          glossary: GlossaryStore.mergedFor(input, settings.glossary),
+          checkpointPath: TranslateCheckpoint.pathFor(output),
+          checkpointMtimeMs: inputMtime,
+          cache: cache,
           onEvent: onLiveEvent,
+          // v2.2.1：网络参数（设置页可调）与用量累计
+          retries: settings.aiRetries,
+          timeout: Duration(seconds: settings.aiTimeoutSeconds),
+          onUsage: onUsage,
           onProgress: (frac) {
-            task.progress = 0.6 + frac * (endAt - 0.6);
+            task.progress = frac * translateEnd;
             notify();
           },
           shouldCancel: () => token.isCancelled,
         );
+        if (doPolish) {
+          t = await TranslationService.instance.polishDocument(
+            t,
+            config: c,
+            target: target,
+            customRules: settings.polishCustomRules,
+            onEvent: onLiveEvent,
+            retries: settings.aiRetries,
+            timeout: Duration(seconds: settings.aiTimeoutSeconds),
+            onUsage: onUsage,
+            onProgress: (frac) {
+              task.progress = 0.6 + frac * (endAt - 0.6);
+              notify();
+            },
+            shouldCancel: () => token.isCancelled,
+          );
+        }
+        return t;
+      }
+
+      // v2.2.1 主备降级：主配置 HTTP/网络类失败耗尽重试后，
+      // 自动切换第一个就绪的备用档案整任务重跑（checkpoint 续传，只补失败批）
+      late final SubtitleDocument translated;
+      try {
+        translated = await runPipeline(config);
+      } on TranslationBatchException catch (e) {
+        final fb = AiFailover.fallbackAfter(
+          profiles: settings.aiProfiles,
+          activeName: settings.aiActiveProfile,
+          parseFailure: e.parseFailure,
+        );
+        if (fb == null) rethrow;
+        task.liveLines.add('主配置失败（$e），自动切换备用配置重试');
+        _trimLiveLines(task);
+        notify();
+        translated = await runPipeline(fb);
       }
       // P1 约定：输出格式由源文件格式决定，不修改（同格式写出，UTF-8）
       final format = doc.format == SubtitleFormat.unknown

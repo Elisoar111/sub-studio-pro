@@ -8,6 +8,7 @@ import '../models/history_entry.dart';
 import '../models/queue_task.dart';
 import '../models/task_params.dart';
 import '../models/task_run_result.dart';
+import '../providers/app_providers.dart';
 import 'ffmpeg/ffmpeg_runner.dart';
 import 'ffmpeg/ffmpeg_service.dart';
 import 'notification_service.dart';
@@ -112,10 +113,18 @@ class QueueService extends ChangeNotifier {
 
     try {
       while (_tasks.any((t) => t.status == TaskStatus.pending)) {
+        // 网络车道并发 worker 数（v2.2.1 设置页可调，默认 1 串行）；
+        // 各 worker 的取任务是同步段（pick → _runOne 前缀置 running），
+        // 单 isolate 下不会重复领取同一任务
+        final networkWorkers =
+            SettingsProvider.instance.aiConcurrency.clamp(1, 4);
         final lanes = <Future<void>>[
-          if (_tasks.any((t) => t.status == TaskStatus.pending && t.type.isNetwork))
-            _runLane(network: true, count: count),
-          if (_tasks.any((t) => t.status == TaskStatus.pending && !t.type.isNetwork))
+          for (var i = 0; i < networkWorkers; i++)
+            if (_tasks.any(
+                (t) => t.status == TaskStatus.pending && t.type.isNetwork))
+              _runLane(network: true, count: count),
+          if (_tasks.any(
+              (t) => t.status == TaskStatus.pending && !t.type.isNetwork))
             _runLane(network: false, count: count),
         ];
         await Future.wait(lanes);

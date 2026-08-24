@@ -64,13 +64,23 @@ class _TranslateScreenState extends State<TranslateScreen> {
     if (mounted) setState(() {});
   }
 
-  /// 直播面板展示对象：队列中未完成的翻译任务（最多 3 条）。
-  List<QueueTask> get _liveTasks => QueueService.instance.tasks
-      .where((t) =>
-          t.type == TaskType.subtitleTranslate &&
-          (t.status == TaskStatus.pending || t.status == TaskStatus.running))
-      .take(3)
-      .toList();
+  /// 直播面板展示对象（像 Whisper 一样可回看）：进行中任务全部展示 +
+  /// 最近 2 条已完成的（不设过期时间，结束后随时回本页查看）。
+  List<QueueTask> get _liveTasks {
+    final translate = QueueService.instance.tasks
+        .where((t) => t.type == TaskType.subtitleTranslate)
+        .toList();
+    final active = translate
+        .where((t) =>
+            t.status == TaskStatus.pending || t.status == TaskStatus.running)
+        .toList();
+    final finishedAll = translate
+        .where((t) => t.status.isFinished)
+        .toList();
+    final keep = finishedAll.length > 2 ? finishedAll.length - 2 : 0;
+    final finished = finishedAll.sublist(keep);
+    return [...active, ...finished.reversed];
+  }
 
   Future<void> _pickFiles() async {
     try {
@@ -385,6 +395,13 @@ class _TranslateScreenState extends State<TranslateScreen> {
                         color: scheme.onSurfaceVariant,
                       ),
                 ),
+                // 像 Whisper 一样可回看：打开完整直播日志
+                IconButton(
+                  tooltip: '直播详情',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => _openLiveDetail(t),
+                  icon: const Icon(Icons.receipt_long_outlined, size: 16),
+                ),
               ],
             ),
             if (t.status == TaskStatus.running) ...[
@@ -400,6 +417,34 @@ class _TranslateScreenState extends State<TranslateScreen> {
                 child: Text(
                   '思考：${_tailOf(t.liveThinking, 400)}',
                   maxLines: 4,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontFamily: 'Consolas',
+                    fontSize: 12,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            if (t.liveTranslating.trim().isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  '译文：${_tailOf(TranslationService.parseLiveTranscript(t.liveTranslating), 400)}',
+                  maxLines: 4,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontFamily: 'Consolas',
+                    fontSize: 12,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            if (t.usageTotalTokens > 0)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  _usageLine(t),
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontFamily: 'Consolas',
@@ -426,9 +471,28 @@ class _TranslateScreenState extends State<TranslateScreen> {
     );
   }
 
+  /// 完整直播日志（像 Whisper 实时输出一样可回看）：
+  /// 全部事件行 + 完整思考流 / 流式译文 / token 用量；
+  /// 任务运行中时自动跟随滚动到最新。
+  Future<void> _openLiveDetail(QueueTask task) {
+    return showDialog<void>(
+      context: context,
+      builder: (_) => _LiveDetailDialog(task: task),
+    );
+  }
+
   /// 取字符串尾部（直播思考流只显示最新片段）。
   static String _tailOf(String s, int max) =>
       s.length <= max ? s : s.substring(s.length - max);
+
+  /// token 用量摘要行（v2.2.1）：消耗 + 输入/输出拆分（v2.2.2 移除计费）。
+  static String _usageLine(QueueTask t) =>
+      '消耗：${_fmtInt(t.usageTotalTokens)} token'
+      '（入 ${_fmtInt(t.usagePromptTokens)} / 出 ${_fmtInt(t.usageCompletionTokens)}）';
+
+  /// 千位分隔（1500 → 1,500）。
+  static String _fmtInt(int v) =>
+      v.toString().replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (m) => ',');
 
   /// 取列表尾部 n 条（直播事件行只显示最近若干条）。
   static List<String> _tailOfList(List<String> list, int n) =>
@@ -614,4 +678,143 @@ class _TranslateScreenState extends State<TranslateScreen> {
       if (mounted) showErrorSnack(context, e);
     }
   }
+}
+
+/// 直播详情对话框（像 Whisper 实时输出面板）：完整直播日志可滚动回看，
+/// 任务运行中自动跟随滚动到最新，结束后内容保留。
+class _LiveDetailDialog extends StatefulWidget {
+  const _LiveDetailDialog({required this.task});
+
+  final QueueTask task;
+
+  @override
+  State<_LiveDetailDialog> createState() => _LiveDetailDialogState();
+}
+
+class _LiveDetailDialogState extends State<_LiveDetailDialog> {
+  final _scroll = ScrollController();
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final t = widget.task;
+    final running = t.status == TaskStatus.running;
+    return AlertDialog(
+      title: Row(
+        children: [
+          const Expanded(child: Text('直播详情')),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: (running ? scheme.primary : Colors.green)
+                  .withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              running ? '翻译中' : '已结束',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: running ? scheme.primary : Colors.green,
+              ),
+            ),
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: 680,
+        height: 520,
+        child: AnimatedBuilder(
+          animation: QueueService.instance,
+          builder: (context, _) {
+            if (running) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (_scroll.hasClients) {
+                  _scroll.jumpTo(_scroll.position.maxScrollExtent);
+                }
+              });
+            }
+            return SingleChildScrollView(
+              controller: _scroll,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    t.title,
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(fontWeight: FontWeight.w600),
+                  ),
+                  const Divider(height: 20),
+                  if (t.liveThinking.trim().isNotEmpty) ...[
+                    _label('思考', scheme),
+                    Text(
+                      t.liveThinking,
+                      style: _mono(scheme),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                  if (t.liveTranslating.trim().isNotEmpty) ...[
+                    _label('译文（当前批次）', scheme),
+                    Text(
+                      TranslationService.parseLiveTranscript(t.liveTranslating),
+                      style: _mono(scheme),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                  if (t.usageTotalTokens > 0) ...[
+                    _label('token 用量', scheme),
+                    Text(
+                      _usageLineOf(t),
+                      style: _mono(scheme),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                  _label('事件（全部 ${t.liveLines.length} 条）', scheme),
+                  for (final line in t.liveLines)
+                    Text(line, style: _mono(scheme)),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('关闭'),
+        ),
+      ],
+    );
+  }
+
+  static Widget _label(String text, ColorScheme scheme) => Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Text(
+          text,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: scheme.primary,
+          ),
+        ),
+      );
+
+  static TextStyle _mono(ColorScheme scheme) => TextStyle(
+        fontFamily: 'Consolas',
+        fontSize: 12,
+        height: 1.5,
+        color: scheme.onSurfaceVariant,
+      );
+
+  static String _usageLineOf(QueueTask t) =>
+      '消耗：${t.usageTotalTokens} token'
+      '（入 ${t.usagePromptTokens} / 出 ${t.usageCompletionTokens}）';
 }

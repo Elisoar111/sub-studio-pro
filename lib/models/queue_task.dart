@@ -66,8 +66,18 @@ class QueueTask {
   /// （reasoning 模型 delta.reasoning_content 增量累积）。
   String liveThinking = '';
 
+  /// 实时直播（v2.2.1）：当前批次译文增量累积（原始 JSON 文本，
+  /// 展示时经 parseLiveTranscript 清洗；batchStart 时重置）。
+  String liveTranslating = '';
+
   /// 实时直播：最近事件行（批次开始/完成/重试，保留尾部 30 条）。
   final List<String> liveLines = [];
+
+  /// token 用量（v2.2.1）：本任务全部请求的 usage 尾包累计，
+  /// 任务结束在直播面板显示消耗与预估费用。
+  int usagePromptTokens = 0;
+  int usageCompletionTokens = 0;
+  int usageTotalTokens = 0;
 
   final DateTime createdAt;
   DateTime? startedAt;

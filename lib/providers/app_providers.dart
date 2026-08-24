@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart' show Provider;
 import '../core/theme.dart';
+import '../models/ai_profile.dart';
 import '../models/history_entry.dart';
 import '../models/queue_task.dart';
 import '../services/ai/translation_service.dart' show GlossaryTerm, kGlossaryMaxTerms;
@@ -35,6 +36,11 @@ class SettingsProvider extends ChangeNotifier {
   static const _kAiApiKey = 'ai_api_key';
   static const _kAiBaseUrl = 'ai_base_url';
   static const _kAiModel = 'ai_model';
+  static const _kAiTimeout = 'ai_timeout_seconds';
+  static const _kAiRetries = 'ai_retries';
+  static const _kAiConcurrency = 'ai_concurrency';
+  static const _kAiProfiles = 'ai_profiles';
+  static const _kAiActiveProfile = 'ai_active_profile';
   static const _kGlossary = 'ai_glossary';
   static const _kPolishCustomRules = 'ai_polish_custom_rules';
   static const _kCloseToTray = 'close_to_tray';
@@ -56,6 +62,17 @@ class SettingsProvider extends ChangeNotifier {
   String _aiApiKey = '';
   String _aiBaseUrl = '';
   String _aiModel = '';
+
+  /// AI 翻译：网络参数（v2.2.1 设置页可调）——单批请求超时秒数 /
+  /// 额外重试次数 / 网络车道并发 worker 数。
+  int _aiTimeoutSeconds = 120;
+  int _aiRetries = 2;
+  int _aiConcurrency = 1;
+
+  /// AI 翻译：多配置档案（v2.2.1）+ 激活档案名（空 = 未启用档案，
+  /// 沿用单配置字段）。激活档案始终同步写回单配置字段（TaskRunner 只读单配置）。
+  List<AiProfile> _aiProfiles = [];
+  String _aiActiveProfile = '';
 
   /// AI 翻译：术语表（人名/专名锁定）
   List<GlossaryTerm> _glossary = [];
@@ -90,6 +107,16 @@ class SettingsProvider extends ChangeNotifier {
   String get aiBaseUrl => _aiBaseUrl;
 
   String get aiModel => _aiModel;
+
+  int get aiTimeoutSeconds => _aiTimeoutSeconds;
+
+  int get aiRetries => _aiRetries;
+
+  int get aiConcurrency => _aiConcurrency;
+
+  List<AiProfile> get aiProfiles => List.unmodifiable(_aiProfiles);
+
+  String get aiActiveProfile => _aiActiveProfile;
 
   List<GlossaryTerm> get glossary => List.unmodifiable(_glossary);
 
@@ -144,6 +171,39 @@ class SettingsProvider extends ChangeNotifier {
       fallback: 'https://api.openai.com',
     );
     _aiModel = StorageService.instance.getSetting(_kAiModel);
+    int loadInt(String key, int def, {required int min, required int max}) {
+      final v = int.tryParse(StorageService.instance.getSetting(key));
+      if (v == null || v < min || v > max) return def;
+      return v;
+    }
+
+    _aiTimeoutSeconds =
+        loadInt(_kAiTimeout, 120, min: 10, max: 600);
+    _aiRetries = loadInt(_kAiRetries, 2, min: 0, max: 5);
+    _aiConcurrency = loadInt(_kAiConcurrency, 1, min: 1, max: 4);
+    // v2.2.1 档案：损坏数据按无档案处理（沿用单配置字段）
+    try {
+      final raw = StorageService.instance.getSetting(_kAiProfiles);
+      if (raw.isNotEmpty) {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          _aiProfiles = [
+            for (final e in decoded)
+              if (e is Map) AiProfile.fromJson(e.cast<String, dynamic>()),
+          ];
+        }
+      }
+    } catch (_) {
+      _aiProfiles = [];
+    }
+    _aiActiveProfile =
+        StorageService.instance.getSetting(_kAiActiveProfile);
+    if (_aiProfiles.isNotEmpty && !_aiProfiles.any((p) => p.name == _aiActiveProfile)) {
+      _aiActiveProfile = _aiProfiles.first.name;
+    }
+    if (_aiProfiles.isEmpty) _aiActiveProfile = '';
+    // 激活档案优先于单配置字段（旧值仅作档案为空时的回退）
+    _syncSingleFromActiveProfile();
     _polishCustomRules =
         StorageService.instance.getSetting(_kPolishCustomRules);
     _closeToTray = StorageService.instance.getSetting(
@@ -223,6 +283,80 @@ class SettingsProvider extends ChangeNotifier {
     await StorageService.instance.setSetting(_kAiApiKey, _aiApiKey);
     await StorageService.instance.setSetting(_kAiBaseUrl, _aiBaseUrl);
     await StorageService.instance.setSetting(_kAiModel, _aiModel);
+  }
+
+  /// 激活档案 → 单配置字段（TaskRunner / 翻译页只读单配置，
+  /// 保持旧路径零改动；档案为空或激活名无效时不覆盖）。
+  void _syncSingleFromActiveProfile() {
+    if (_aiProfiles.isEmpty) return;
+    AiProfile? active;
+    for (final p in _aiProfiles) {
+      if (p.name == _aiActiveProfile) {
+        active = p;
+        break;
+      }
+    }
+    if (active == null) return;
+    _aiApiKey = active.apiKey;
+    _aiBaseUrl = active.baseUrl;
+    _aiModel = active.model;
+  }
+
+  /// 保存配置档案列表（v2.2.1）：重名抛 [ArgumentError]；
+  /// 激活档案缺失时默认激活首个；单配置字段随激活档案同步。
+  Future<void> setAiProfiles(List<AiProfile> profiles) async {
+    final names = <String>{};
+    for (final p in profiles) {
+      if (!names.add(p.name)) {
+        throw ArgumentError('配置档案重名：${p.name}');
+      }
+    }
+    _aiProfiles = List.of(profiles);
+    if (_aiProfiles.isEmpty) {
+      _aiActiveProfile = '';
+    } else if (!_aiProfiles.any((p) => p.name == _aiActiveProfile)) {
+      _aiActiveProfile = _aiProfiles.first.name;
+    }
+    _syncSingleFromActiveProfile();
+    notifyListeners();
+    await StorageService.instance.setSetting(
+        _kAiProfiles, jsonEncode([for (final p in _aiProfiles) p.toJson()]));
+    await StorageService.instance
+        .setSetting(_kAiActiveProfile, _aiActiveProfile);
+    await StorageService.instance.setSetting(_kAiApiKey, _aiApiKey);
+    await StorageService.instance.setSetting(_kAiBaseUrl, _aiBaseUrl);
+    await StorageService.instance.setSetting(_kAiModel, _aiModel);
+  }
+
+  /// 切换激活档案（v2.2.1）：不存在的名字忽略；
+  /// 单配置字段同步覆盖（含持久化，重启后保持）。
+  Future<void> switchAiProfile(String name) async {
+    if (!_aiProfiles.any((p) => p.name == name)) return;
+    _aiActiveProfile = name;
+    _syncSingleFromActiveProfile();
+    notifyListeners();
+    await StorageService.instance.setSetting(_kAiActiveProfile, name);
+    await StorageService.instance.setSetting(_kAiApiKey, _aiApiKey);
+    await StorageService.instance.setSetting(_kAiBaseUrl, _aiBaseUrl);
+    await StorageService.instance.setSetting(_kAiModel, _aiModel);
+  }
+
+  /// 保存 AI 网络参数（v2.2.1）：超时秒数（10–600，非法回退 120）、
+  /// 额外重试次数（0–5）、网络车道并发 worker 数（1–4），范围外取边界。
+  Future<void> setAiNetworkParams({
+    int? timeoutSeconds,
+    int? retries,
+    int? concurrency,
+  }) async {
+    final t = timeoutSeconds ?? _aiTimeoutSeconds;
+    _aiTimeoutSeconds = t >= 10 && t <= 600 ? t : 120;
+    _aiRetries = (retries ?? _aiRetries).clamp(0, 5);
+    _aiConcurrency = (concurrency ?? _aiConcurrency).clamp(1, 4);
+    notifyListeners();
+    await StorageService.instance.setSetting(_kAiTimeout, '$_aiTimeoutSeconds');
+    await StorageService.instance.setSetting(_kAiRetries, '$_aiRetries');
+    await StorageService.instance
+        .setSetting(_kAiConcurrency, '$_aiConcurrency');
   }
 
   /// 保存术语表（人名/专名锁定，翻译时注入 prompt；上限 [kGlossaryMaxTerms]）。

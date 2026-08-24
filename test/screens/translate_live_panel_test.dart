@@ -44,10 +44,121 @@ void main() {
     expect(find.text('查看队列'), findsOneWidget, reason: '面板保留手动进队列的入口');
   });
 
+  testWidgets('直播面板（v2.2.1）：流式译文增量逐字上屏', (tester) async {
+    final task = QueueService.instance.addTask(
+      type: TaskType.subtitleTranslate,
+      title: '翻译 demo.srt → 简体中文',
+    );
+    task.status = TaskStatus.running;
+    task.liveThinking = '先分析语境';
+    task.liveTranslating = '第一句译文正在逐字上';
+
+    await tester.pumpWidget(const MaterialApp(home: TranslateScreen()));
+    await tester.pump();
+    await tester.scrollUntilVisible(
+      find.text('翻译进度'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.textContaining('译文：'), findsOneWidget,
+        reason: '流式译文行应有「译文：」前缀');
+    expect(find.textContaining('第一句译文正在逐字上'), findsOneWidget,
+        reason: '当前批次译文增量应在面板实时可见');
+  });
+
   testWidgets('直播面板：队列无进行中翻译任务时不渲染', (tester) async {
     await tester.pumpWidget(const MaterialApp(home: TranslateScreen()));
     await tester.pump();
     expect(find.text('翻译进度'), findsNothing);
+  });
+
+  testWidgets('直播面板：任务完成后保留展示 token 用量（不再计费）', (tester) async {
+    final task = QueueService.instance.addTask(
+      type: TaskType.subtitleTranslate,
+      title: '翻译 demo.srt → 简体中文',
+    );
+    task.status = TaskStatus.completed;
+    task.finishedAt = DateTime.now();
+    task.usagePromptTokens = 1000;
+    task.usageCompletionTokens = 500;
+    task.usageTotalTokens = 1500;
+
+    await tester.pumpWidget(const MaterialApp(home: TranslateScreen()));
+    await tester.pump();
+    await tester.scrollUntilVisible(
+      find.text('翻译进度'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('翻译进度'), findsOneWidget,
+        reason: '刚完成的翻译任务应在面板保留展示');
+    expect(
+      find.textContaining('消耗：1,500 token（入 1,000 / 出 500）'),
+      findsOneWidget,
+      reason: '任务结束显示 token 消耗摘要',
+    );
+    expect(find.textContaining(r'$'), findsNothing,
+        reason: 'v2.2.2 起移除 token 计费，不显示任何费用');
+  });
+
+  testWidgets('直播面板：完成已久的任务仍保留可回看（像 Whisper 一样）',
+      (tester) async {
+    final task = QueueService.instance.addTask(
+      type: TaskType.subtitleTranslate,
+      title: '翻译 demo.srt → 简体中文',
+    );
+    task.status = TaskStatus.completed;
+    task.finishedAt = DateTime.now().subtract(const Duration(hours: 1));
+    task.liveLines.add('翻译批次 1/3 完成（line 0 → 译0）');
+
+    await tester.pumpWidget(const MaterialApp(home: TranslateScreen()));
+    await tester.pump();
+    await tester.scrollUntilVisible(
+      find.text('翻译进度'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('翻译进度'), findsOneWidget,
+        reason: '已完成任务不设过期时间，随时回翻译页查看');
+  });
+
+  testWidgets('直播面板：详情按钮打开完整直播日志', (tester) async {
+    final task = QueueService.instance.addTask(
+      type: TaskType.subtitleTranslate,
+      title: '翻译 demo.srt → 简体中文',
+    );
+    task.status = TaskStatus.completed;
+    task.finishedAt = DateTime.now();
+    task.liveThinking = '先分析语境';
+    task.liveTranslating = '{"lines":["译0"]}';
+    for (var i = 1; i <= 8; i++) {
+      task.liveLines.add('批次事件 $i');
+    }
+
+    await tester.pumpWidget(const MaterialApp(home: TranslateScreen()));
+    await tester.pump();
+    await tester.scrollUntilVisible(
+      find.text('翻译进度'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    // 面板摘要只显示尾部 6 条（事件 3–8），完整日志经「详情」查看
+    expect(find.textContaining('批次事件 1'), findsNothing,
+        reason: '面板摘要只显示尾部若干条');
+
+    final detailBtn = find.byIcon(Icons.receipt_long_outlined).first;
+    await tester.ensureVisible(detailBtn);
+    await tester.pumpAndSettle();
+    await tester.tap(detailBtn);
+    await tester.pumpAndSettle();
+
+    expect(find.text('直播详情'), findsOneWidget, reason: '详情对话框应打开');
+    expect(find.textContaining('批次事件 1'), findsOneWidget,
+        reason: '完整日志包含面板外的早期事件行');
+    expect(find.textContaining('批次事件 8'), findsAtLeastNWidgets(1),
+        reason: '对话框与面板摘要均含最新事件');
+    expect(find.textContaining('先分析语境'), findsAtLeastNWidgets(1),
+        reason: '详情包含思考流（面板摘要与对话框各一处）');
   });
 
   testWidgets('开始翻译：留在翻译页不跳队列，任务入队并提示', (tester) async {

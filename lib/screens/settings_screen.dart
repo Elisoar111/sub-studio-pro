@@ -76,6 +76,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   late final TextEditingController _polishRulesCtrl = TextEditingController(
       text: SettingsProvider.instance.polishCustomRules);
 
+  /// v2.2.1 高级参数：超时 / 重试 / 并发。
+  late final TextEditingController _aiTimeoutCtrl = TextEditingController(
+      text: '${SettingsProvider.instance.aiTimeoutSeconds}');
+  late final TextEditingController _aiRetriesCtrl = TextEditingController(
+      text: '${SettingsProvider.instance.aiRetries}');
+  int _aiConcurrencySel = SettingsProvider.instance.aiConcurrency;
+
   /// v2.2：「获取模型」拉取的模型列表（下拉数据源）。
   List<String> _models = [];
   bool _fetchingModels = false;
@@ -140,6 +147,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _aiKeyCtrl.dispose();
     _aiUrlCtrl.dispose();
     _aiModelCtrl.dispose();
+    _aiTimeoutCtrl.dispose();
+    _aiRetriesCtrl.dispose();
     _mkvDirCtrl.dispose();
     _whisperPathCtrl.dispose();
     _whisperCacheCtrl.dispose();
@@ -1562,6 +1571,61 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
           ),
           const SizedBox(height: 10),
+          // v2.2.1 高级参数：超时 / 重试 / 并发
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              SizedBox(
+                width: 160,
+                child: TextField(
+                  controller: _aiTimeoutCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: '超时（秒）',
+                    prefixIcon: Icon(Icons.timer_outlined),
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 160,
+                child: TextField(
+                  controller: _aiRetriesCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: '重试次数',
+                    prefixIcon: Icon(Icons.replay_outlined),
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 180,
+                child: DropdownButtonFormField<int>(
+                  initialValue: _aiConcurrencySel,
+                  items: const [
+                    DropdownMenuItem(value: 1, child: Text('1（串行）')),
+                    DropdownMenuItem(value: 2, child: Text('2')),
+                    DropdownMenuItem(value: 3, child: Text('3')),
+                    DropdownMenuItem(value: 4, child: Text('4')),
+                  ],
+                  onChanged: (v) => setState(() => _aiConcurrencySel = v ?? 1),
+                  decoration: const InputDecoration(
+                    labelText: '并发任务数',
+                    prefixIcon: Icon(Icons.call_split_outlined),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '高级参数：超时 10–600 秒、重试 0–5 次、并发 1–4（API 限流时调低，'
+            '下次开始翻译生效）。',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+          ),
+          const SizedBox(height: 10),
           Text(
             '仅保存在本机（Hive）；翻译时字幕文本会发送到该 API 服务商。'
             '兼容 OpenAI / DeepSeek / 中转等 chat/completions 接口。',
@@ -1581,8 +1645,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     baseUrl: _aiUrlCtrl.text,
                     model: _aiModelCtrl.text,
                   );
-                  await SettingsProvider.instance
-                      .setPolishCustomRules(_polishRulesCtrl.text);
+                  await SettingsProvider.instance.setPolishCustomRules(
+                      _polishRulesCtrl.text);
+                  // v2.2.1 高级参数（非法输入回退当前值/默认）
+                  await SettingsProvider.instance.setAiNetworkParams(
+                    timeoutSeconds:
+                        int.tryParse(_aiTimeoutCtrl.text.trim()),
+                    retries: int.tryParse(_aiRetriesCtrl.text.trim()),
+                    concurrency: _aiConcurrencySel,
+                  );
                   if (mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text('AI 翻译配置已保存')),

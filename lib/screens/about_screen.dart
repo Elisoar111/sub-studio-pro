@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../core/constants.dart';
 
-/// 关于页（v2.1.0 更新）：纯信息页——品牌横幅 + 定位介绍 + 能力速览 +
-/// 技术栈与格式支持。检查更新入口已迁至设置页「维护」分组
-/// （版本与更新区块，含每 6 小时的自动检查开关）。
+/// 关于页（v2.2.1 更新）：纯信息页——品牌横幅 + 定位介绍 + 能力速览 +
+/// 技术栈 + 格式支持 + 当前版本更新日志。
+/// 检查更新入口位于设置页「维护」分组（版本与更新区块）。
 class AboutScreen extends StatefulWidget {
   const AboutScreen({super.key});
 
@@ -18,7 +18,7 @@ class _AboutScreenState extends State<AboutScreen> {
   static const _capabilities = [
     (Icons.library_books_outlined, '字幕库', '导入排序预览，格式互转与编码检测'),
     (Icons.local_fire_department_outlined, '字幕烧录', 'libass 硬字幕压制，保留 ASS 特效'),
-    (Icons.translate, 'AI 翻译', 'OpenAI 兼容 API，保留时间轴，可双语'),
+    (Icons.translate, 'AI 翻译', '多配置档案一键切换，流式直播与用量统计'),
     (Icons.mic_none, 'Whisper 字幕', '本地语音转写，模型预下载管理'),
     (Icons.swap_vert_circle_outlined, '轨道处理', 'MKV 提取与封装，对齐 gMKVExtractGUI'),
     (Icons.compress, '转码压缩', '分辨率、码率、CRF 全参数可调'),
@@ -33,6 +33,19 @@ class _AboutScreenState extends State<AboutScreen> {
     ('MKVToolNix', '轨道提取（mkvextract）与封装（mkvmerge），支持应用内便携导入'),
     ('Whisper', '本地语音识别转写（openai-whisper / faster-whisper / whisper.cpp 多后端）'),
     ('Hive', '历史与配置的本机存储；API Key 与处理过程均不上传'),
+  ];
+
+  /// 更新日志：仅保留最新版本的更新内容（发版时整体替换）。
+  static const _changelogTheme = 'AI 优化与直播回看';
+  static const _changelogNotes = [
+    'JSON 输出模式：降低模型输出非 JSON 的重试失败（省重复请求）',
+    '流式译文逐字上屏与 token 用量统计',
+    '失败批次自动拆半重试（30→15→8 条）',
+    '多配置档案一键切换，主备自动降级',
+    '翻译内容缓存：相似台词零成本命中',
+    '超时 / 重试 / 并发参数开放设置',
+    '直播详情回看：完整翻译日志随时查看（对齐 Whisper）',
+    '关于页新增更新日志；移除 token 计费预估',
   ];
 
   // ───────────────────────── 构建 ─────────────────────────
@@ -78,6 +91,9 @@ class _AboutScreenState extends State<AboutScreen> {
                     _sectionTitle(context, '格式支持',
                         '覆盖字幕组日常交付的主流容器与编码'),
                     _formatChips(scheme),
+                    const SizedBox(height: 32),
+                    _sectionTitle(context, '更新日志', '当前版本的主要更新内容'),
+                    _changelogCard(scheme, text),
                     const SizedBox(height: 36),
                     Divider(
                         color: scheme.outlineVariant.withValues(alpha: 0.6)),
@@ -323,6 +339,83 @@ class _AboutScreenState extends State<AboutScreen> {
           ),
         ),
     ];
+  }
+
+  // ───────────────────────── 更新日志卡片 ─────────────────────────
+
+  Widget _changelogCard(ColorScheme scheme, TextTheme text) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.5)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: scheme.primary,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  'v${AppConstants.appVersion}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    fontFamily: 'Consolas',
+                    color: scheme.onPrimary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                _changelogTheme,
+                style:
+                    text.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          for (final note in _changelogNotes)
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 7),
+                    child: Container(
+                      width: 4,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: scheme.primary,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      note,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        height: 1.5,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
   // ───────────────────────── 格式支持标签 ─────────────────────────

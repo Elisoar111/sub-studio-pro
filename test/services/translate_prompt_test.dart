@@ -27,10 +27,12 @@ void main() {
       expect(p.toLowerCase(), contains('backslash-n'));
     });
 
-    test('锁定行数一致与纯 JSON 数组输出要求', () {
+    test('锁定行数一致与纯 JSON 对象输出要求（v2.2.1 json_object 模式）', () {
       final p = translateSystemPrompt(TranslateLanguage.presets.first);
       expect(p, contains('same length'));
-      expect(p, contains('JSON array'));
+      expect(p, contains('JSON object'),
+          reason: 'v2.2.1 起请求带 response_format json_object，'
+              '契约从数组改为 {"lines":[...]} 对象');
       expect(p, contains('ONLY'), reason: '禁止模型输出解释性文字');
     });
   });

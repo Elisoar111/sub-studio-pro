@@ -1,7 +1,7 @@
 name: subtitle_studio_pro
 description: "Subtitle Studio Pro —— Windows 字幕组专用视频处理工具：字幕格式转换 / 烧录 / 提取 / 转码压缩"
 publish_to: 'none'
-version: 2.2.0+7
+version: 2.2.2+9
 
 environment:
   sdk: '>=3.3.0 <4.0.0'

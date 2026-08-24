@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 
 import '../../core/utils/logger.dart';
 import '../../models/subtitle.dart';
+import 'translation_cache.dart';
 
 /// OpenAI 兼容 API 配置（Key / BaseURL / 模型，设置页配置）。
 class AiApiConfig {
@@ -82,7 +83,8 @@ const int kGlossaryMaxTerms = 200;
 
 /// 翻译 system prompt（独立函数便于测试锁定规则）：
 /// 目标语言注入 + ASS 标签原样保留 + `\N` 硬换行保留 + 行数一致 +
-/// 仅输出 JSON 数组；[glossary] 非空时追加术语锁定段。
+/// 仅输出 JSON 对象（v2.2.1 起配合 `response_format: json_object`，
+/// 契约从数组改为 `{"lines":[...]}`）；[glossary] 非空时追加术语锁定段。
 String translateSystemPrompt(
   TranslateLanguage target, {
   List<GlossaryTerm> glossary = const [],
@@ -92,8 +94,8 @@ String translateSystemPrompt(
       'Rules: keep the ASS override tags like {\\i1} exactly as-is; '
       'keep the literal backslash-N line breaks exactly; '
       'do not add or remove lines; do not add quotes or numbering. '
-      'Reply with ONLY a JSON array of strings, same length and order '
-      'as the input.';
+      'Reply with ONLY a JSON object like {"lines":["...","..."]}, '
+      'same length and order as the input.';
   if (glossary.isNotEmpty) {
     final lines = [
       for (final t in glossary)
@@ -117,7 +119,7 @@ String translateUserPayload(
 
 /// 润色 system prompt（二阶段调用，开关默认关闭）：
 /// 只修断句/标点/口语表达，不改语义；ASS 标签与 `\N` 原样保留；
-/// 行数一致、仅输出 JSON 数组（与翻译阶段同契约，便于复用解析）。
+/// 行数一致、仅输出 JSON 对象（与翻译阶段同契约，便于复用解析）。
 /// [customRules]（v1.3）为用户自定义附加段，拼接到内置规则之后。
 String polishSystemPrompt(TranslateLanguage target, {String customRules = ''}) {
   final base = 'You are a professional subtitle proofreader. '
@@ -127,8 +129,8 @@ String polishSystemPrompt(TranslateLanguage target, {String customRules = ''}) {
       'Rules: keep the ASS override tags like {\\i1} exactly as-is; '
       'keep the literal backslash-N line breaks exactly; '
       'do not add or remove lines; do not add quotes or numbering. '
-      'Reply with ONLY a JSON array of strings, same length and order '
-      'as the input.';
+      'Reply with ONLY a JSON object like {"lines":["...","..."]}, '
+      'same length and order as the input.';
   final extra = customRules.trim();
   return extra.isEmpty ? base : '$base Custom rules: $extra。';
 }
@@ -160,7 +162,80 @@ class TestConnectionResult {
 }
 
 /// 翻译过程中的实时事件种类（翻译页直播面板）。
-enum TranslateEventKind { batchStart, batchDone, thinking, retry }
+enum TranslateEventKind { batchStart, batchDone, thinking, delta, retry }
+
+/// 单个 SSE data 载荷的 token 用量（chat/completions usage 字段）。
+class AiUsage {
+  final int promptTokens;
+  final int completionTokens;
+  final int totalTokens;
+
+  const AiUsage({
+    required this.promptTokens,
+    required this.completionTokens,
+    required this.totalTokens,
+  });
+
+  AiUsage operator +(AiUsage o) => AiUsage(
+        promptTokens: promptTokens + o.promptTokens,
+        completionTokens: completionTokens + o.completionTokens,
+        totalTokens: totalTokens + o.totalTokens,
+      );
+
+  @override
+  bool operator ==(Object other) =>
+      other is AiUsage &&
+      other.promptTokens == promptTokens &&
+      other.completionTokens == completionTokens &&
+      other.totalTokens == totalTokens;
+
+  @override
+  int get hashCode =>
+      Object.hash(promptTokens, completionTokens, totalTokens);
+}
+
+/// SSE 行流增量解析器（v2.2.1 流式译文上屏）：喂入原始响应行，
+/// 产出 reasoning / content 增量回调；空行 = 事件边界（多行 `data:`
+/// 拼接为一个载荷），[close] 冲刷流末未遇边界的尾包。
+/// 其余 SSE 字段（event:/id:/注释行）与 `[DONE]`、非 JSON 载荷忽略。
+class SseStreamParser {
+  SseStreamParser({this.onThinking, this.onContent, this.onUsage});
+
+  final void Function(String reasoningDelta)? onThinking;
+  final void Function(String contentDelta)? onContent;
+
+  /// 尾包 token 用量（choices 为空 + usage 字段，S3 统计入口）。
+  final void Function(AiUsage usage)? onUsage;
+  final List<String> _buf = [];
+
+  void feed(String line) {
+    if (line.isEmpty) {
+      _flush();
+      return;
+    }
+    if (line.startsWith('data:')) {
+      _buf.add(line.substring(5).trimLeft());
+    }
+  }
+
+  void close() => _flush();
+
+  void _flush() {
+    if (_buf.isEmpty) return;
+    // 直接拼接而非按 SSE 规范插 \n：chat/completions 的 JSON 载荷内
+    // 不会出现裸换行（换行均为 \n 转义），代理拆行时直接连接才能还原
+    final payload = _buf.join();
+    _buf.clear();
+    final delta = TranslationService.parseSseDelta(payload);
+    if (delta == null) {
+      final usage = TranslationService.parseSseUsage(payload);
+      if (usage != null) onUsage?.call(usage);
+      return;
+    }
+    if (delta.reasoning.isNotEmpty) onThinking?.call(delta.reasoning);
+    if (delta.content.isNotEmpty) onContent?.call(delta.content);
+  }
+}
 
 /// 单个实时翻译事件。
 class TranslateEvent {
@@ -277,6 +352,18 @@ class TranslationService {
   /// 单批 HTTP 超时。
   static const _httpTimeout = Duration(seconds: 120);
 
+  /// 失败批次拆分的粒度下限（≤8 条的批解析失败不再切半，
+  /// 直接按重试耗尽失败，避免小批/鉴权类错误引发调用爆炸）。
+  static const int _splitMinBatchSize = 8;
+
+  /// 重试退避延迟（attempt 从 1 起：2s、4s…）；测试注入口置零加速。
+  static Duration retryDelay(int attempt) =>
+      retryDelayOverride?.call(attempt) ?? Duration(seconds: 2 * attempt);
+
+  /// 测试注入口：重试延迟覆写。
+  @visibleForTesting
+  static Duration Function(int attempt)? retryDelayOverride;
+
   /// 批间上下文携带条数（前批尾部）。
   static const _contextTail = 3;
 
@@ -350,6 +437,25 @@ class TranslationService {
     );
   }
 
+  /// SSE 尾包 / 非流式响应的 token 用量（v2.2.1）。
+  static AiUsage? parseSseUsage(String payload) {
+    final dynamic decoded;
+    try {
+      decoded = jsonDecode(payload);
+    } catch (_) {
+      return null;
+    }
+    if (decoded is! Map) return null;
+    final usage = decoded['usage'];
+    if (usage is! Map) return null;
+    final prompt = usage['prompt_tokens'];
+    final completion = usage['completion_tokens'];
+    final total = usage['total_tokens'];
+    if (prompt is! int || completion is! int || total is! int) return null;
+    return AiUsage(
+        promptTokens: prompt, completionTokens: completion, totalTokens: total);
+  }
+
   /// 把扁平译文按批次尺寸切回嵌套结构（checkpoint 落盘用）。
   static List<List<String>> _splitByBatchSizes(
     List<String> flat,
@@ -370,7 +476,9 @@ class TranslationService {
   /// [chatOverride]：测试注入缝（替代真实 HTTP，不发请求）。
   /// [checkpointPath]/[checkpointMtimeMs]：断点续传——已成功批次落盘，
   /// 失败/取消后重跑同任务跳过这些批次；全部成功后删除 checkpoint。
-  /// [onEvent]：实时事件流（批次开始/完成、思考增量、重试）。
+  /// [onEvent]：实时事件流（批次开始/完成、思考增量、译文增量、重试）。
+  /// [onUsage]（v2.2.1）：每个请求的尾包 token 用量（累计由调用方处理）。
+  /// [retries]/[timeout]（v2.2.1）：单批重试次数与请求超时，默认 2 / 120s。
   Future<SubtitleDocument> translateDocument(
     SubtitleDocument doc, {
     required AiApiConfig config,
@@ -378,10 +486,14 @@ class TranslationService {
     List<GlossaryTerm> glossary = const [],
     void Function(double progress)? onProgress,
     void Function(TranslateEvent event)? onEvent,
+    void Function(AiUsage usage)? onUsage,
     bool Function()? shouldCancel,
     ChatFn? chatOverride,
     String? checkpointPath,
     int? checkpointMtimeMs,
+    TranslationCache? cache,
+    int? retries,
+    Duration? timeout,
   }) async {
     if (!config.isReady) {
       throw StateError('AI 翻译未配置：请在设置页填写 API Key / BaseURL / 模型');
@@ -446,10 +558,41 @@ class TranslationService {
         batchTotal: batches.length,
         text: lines.first,
       ));
-      final results = await _translateBatch(lines, config, target,
+
+      // v2.2.1 翻译缓存：命中行零网络回填，仅未命中行送模型
+      final cached = cache == null
+          ? null
+          : [for (final l in lines) await cache.get(target.code, l)];
+      final sendIdx = cached == null
+          ? [for (var i = 0; i < lines.length; i++) i]
+          : [
+              for (var i = 0; i < lines.length; i++)
+                if (cached[i] == null) i,
+            ];
+      final results = List<String>.filled(lines.length, '');
+      if (cached != null) {
+        for (var i = 0; i < lines.length; i++) {
+          if (cached[i] != null) results[i] = cached[i]!;
+        }
+      }
+      final sendLines = [for (final i in sendIdx) lines[i]];
+      if (sendLines.isNotEmpty) {
+        final fresh = await _translateBatch(sendLines, config, target,
           glossary: glossary,
           context: context.isEmpty ? null : context,
           chatOverride: chatOverride,
+          retries: retries,
+          timeout: timeout,
+          onUsage: onUsage,
+          onContent: onEvent == null
+              ? null
+              : (delta) => onEvent(TranslateEvent(
+                    kind: TranslateEventKind.delta,
+                    tag: '翻译',
+                    batchIndex: b,
+                    batchTotal: batches.length,
+                    text: delta,
+                  )),
           onThinking: onEvent == null
               ? null
               : (delta) => onEvent(TranslateEvent(
@@ -467,12 +610,31 @@ class TranslationService {
                     batchIndex: b,
                     batchTotal: batches.length,
                     text: '第 $attempt 次重试：$error',
+                  )),
+          onSplit: onEvent == null
+              ? null
+              : (half) => onEvent(TranslateEvent(
+                    kind: TranslateEventKind.retry,
+                    tag: '翻译',
+                    batchIndex: b,
+                    batchTotal: batches.length,
+                    text: '批次解析失败，拆分为 2×$half 条重试',
                   )));
+        for (var k = 0; k < sendIdx.length; k++) {
+          results[sendIdx[k]] = fresh[k];
+        }
+      }
       final finals = [
         for (var i = 0; i < batch.length; i++)
           results[i].trim().isEmpty ? batch[i].rawText : results[i].trim(),
       ];
       translated.addAll(finals);
+      // 新译文写回缓存（命中行跳过），随 checkpoint 同步落盘
+      if (cache != null) {
+        for (final i in sendIdx) {
+          await cache.put(target.code, lines[i], finals[i]);
+        }
+      }
       if (checkpointPath != null) {
         await TranslateCheckpoint(
           cueCount: cues.length,
@@ -481,6 +643,7 @@ class TranslationService {
           batches: _splitByBatchSizes(translated, batches),
         ).save(checkpointPath);
       }
+      await cache?.flush();
       onEvent?.call(TranslateEvent(
         kind: TranslateEventKind.batchDone,
         tag: '翻译',
@@ -531,8 +694,11 @@ class TranslationService {
     String customRules = '',
     void Function(double progress)? onProgress,
     void Function(TranslateEvent event)? onEvent,
+    void Function(AiUsage usage)? onUsage,
     bool Function()? shouldCancel,
     ChatFn? chatOverride,
+    int? retries,
+    Duration? timeout,
   }) async {
     if (!config.isReady) {
       throw StateError('AI 翻译未配置：请在设置页填写 API Key / BaseURL / 模型');
@@ -560,11 +726,23 @@ class TranslationService {
         batchTotal: total,
         text: lines.first,
       ));
-      final results = await _chatBatch(lines, config,
+      final results = await _chatBatchResilient(lines, config,
           system: system,
-          user: translateUserPayload(lines),
+          userFor: (sub) => translateUserPayload(sub),
           tag: '润色',
           chatOverride: chatOverride,
+          retries: retries,
+          timeout: timeout,
+          onUsage: onUsage,
+          onContent: onEvent == null
+              ? null
+              : (delta) => onEvent(TranslateEvent(
+                    kind: TranslateEventKind.delta,
+                    tag: '润色',
+                    batchIndex: b,
+                    batchTotal: total,
+                    text: delta,
+                  )),
           onThinking: onEvent == null
               ? null
               : (delta) => onEvent(TranslateEvent(
@@ -582,6 +760,15 @@ class TranslationService {
                     batchIndex: b,
                     batchTotal: total,
                     text: '第 $attempt 次重试：$error',
+                  )),
+          onSplit: onEvent == null
+              ? null
+              : (half) => onEvent(TranslateEvent(
+                    kind: TranslateEventKind.retry,
+                    tag: '润色',
+                    batchIndex: b,
+                    batchTotal: total,
+                    text: '批次解析失败，拆分为 2×$half 条重试',
                   )));
       polished.addAll([
         for (var k = 0; k < batch.length; k++)
@@ -709,7 +896,7 @@ class TranslationService {
     return bilingualJoin(format, original, t);
   }
 
-  /// 翻译一批文本行，返回与输入等长的译文列表（带重试）。
+  /// 翻译一批文本行，返回与输入等长的译文列表（带重试 + 失败拆半）。
   Future<List<String>> _translateBatch(
     List<String> lines,
     AiApiConfig config,
@@ -718,20 +905,34 @@ class TranslationService {
     List<List<String>>? context,
     ChatFn? chatOverride,
     void Function(String reasoningDelta)? onThinking,
+    void Function(String contentDelta)? onContent,
     void Function(int attempt, String error)? onRetry,
+    void Function(int halfSize)? onSplit,
+    void Function(AiUsage usage)? onUsage,
+    int? retries,
+    Duration? timeout,
   }) =>
-      _chatBatch(
+      _chatBatchResilient(
         lines,
         config,
         system: translateSystemPrompt(target, glossary: glossary),
-        user: translateUserPayload(lines, context: context),
+        userFor: (sub) => translateUserPayload(sub, context: context),
         tag: '翻译',
         chatOverride: chatOverride,
         onThinking: onThinking,
+        onContent: onContent,
         onRetry: onRetry,
+        onSplit: onSplit,
+        onUsage: onUsage,
+        retries: retries,
+        timeout: timeout,
       );
 
-  /// 带重试的单批 chat 调用：请求 + 解析 JSON 数组（翻译/润色共用）。
+  /// 带重试的单批 chat 调用：请求 + 解析 JSON（翻译/润色共用）。
+  /// [retries] 额外重试次数（null = 默认 2）；[timeout] 单次请求超时
+  /// （null = 默认 120s，v2.2.1 设置页可调）。
+  /// 重试耗尽抛 [TranslationBatchException]（携带是否解析失败标记，
+  /// 供失败批次拆分重试判定）。
   Future<List<String>> _chatBatch(
     List<String> lines,
     AiApiConfig config, {
@@ -740,45 +941,225 @@ class TranslationService {
     required String tag,
     ChatFn? chatOverride,
     void Function(String reasoningDelta)? onThinking,
+    void Function(String contentDelta)? onContent,
+    void Function(AiUsage usage)? onUsage,
     void Function(int attempt, String error)? onRetry,
+    int? retries,
+    Duration? timeout,
   }) async {
-    const retries = 2;
+    final maxRetries = retries ?? 2;
     Object? lastError;
-    for (var attempt = 0; attempt <= retries; attempt++) {
+    for (var attempt = 0; attempt <= maxRetries; attempt++) {
       if (attempt > 0) {
-        await Future<void>.delayed(Duration(seconds: 2 * attempt));
+        await Future<void>.delayed(retryDelay(attempt));
       }
       try {
         final content = chatOverride != null
             ? await chatOverride(system: system, user: user)
             : await _chat(config,
-                system: system, user: user, onThinking: onThinking);
-        return _parseArray(content, lines.length);
+                system: system, user: user,
+                onThinking: onThinking, onContent: onContent,
+                onUsage: onUsage, timeout: timeout);
+        return parseModelOutput(content, lines.length);
       } catch (e) {
         lastError = e;
         onRetry?.call(attempt, '$e');
         Logger.instance.log('$tag批次失败（第 $attempt 次重试）：$e', tag: 'AI');
       }
     }
-    throw StateError('AI $tag失败：$lastError');
+    throw TranslationBatchException(
+        tag, lastError ?? 'unknown', lastError is FormatException);
   }
 
-  /// 解析模型输出为字符串数组；尽力兼容被 ```json 包裹 / 多余文本的情况。
-  List<String> _parseArray(String content, int expected) {
+  /// 失败批次拆分重试（v2.2.1）：长批次（> [_splitMinBatchSize] 条）因
+  /// 解析失败（输出非 JSON / 长输出截断）重试耗尽时自动切半递归
+  /// （30→15→8），拼接结果保持原顺序；HTTP 类错误与小批不拆分。
+  /// 翻译 / 润色共用。[userFor] 按行重建 user payload（半批行集不同）。
+  Future<List<String>> _chatBatchResilient(
+    List<String> lines,
+    AiApiConfig config, {
+    required String system,
+    required String Function(List<String> lines) userFor,
+    required String tag,
+    ChatFn? chatOverride,
+    void Function(String reasoningDelta)? onThinking,
+    void Function(String contentDelta)? onContent,
+    void Function(AiUsage usage)? onUsage,
+    void Function(int attempt, String error)? onRetry,
+    void Function(int halfSize)? onSplit,
+    int? retries,
+    Duration? timeout,
+  }) async {
+    try {
+      return await _chatBatch(lines, config,
+          system: system,
+          user: userFor(lines),
+          tag: tag,
+          chatOverride: chatOverride,
+          onThinking: onThinking,
+          onContent: onContent,
+          onUsage: onUsage,
+          onRetry: onRetry,
+          retries: retries,
+          timeout: timeout);
+    } on TranslationBatchException catch (e) {
+      if (!e.parseFailure || lines.length <= _splitMinBatchSize) rethrow;
+      final mid = (lines.length / 2).ceil();
+      onSplit?.call(mid);
+      Future<List<String>> half(List<String> sub) => _chatBatchResilient(sub,
+          config,
+          system: system,
+          userFor: userFor,
+          tag: tag,
+          chatOverride: chatOverride,
+          onThinking: onThinking,
+          onContent: onContent,
+          onUsage: onUsage,
+          onRetry: onRetry,
+          onSplit: onSplit,
+          retries: retries,
+          timeout: timeout);
+      final left = await half(lines.sublist(0, mid));
+      final right = await half(lines.sublist(mid));
+      return [...left, ...right];
+    }
+  }
+
+  /// chat/completions 请求体（v2.2.1 JSON 输出模式）：
+  /// `response_format: json_object` 强制模型输出合法 JSON 对象，
+  /// 减少「输出非 JSON → 整批重试（重复计费）」的失败率。
+  static Map<String, dynamic> chatRequestBody({
+    required String model,
+    required String system,
+    required String user,
+    bool jsonMode = true,
+  }) =>
+      {
+        'model': model,
+        'temperature': 0.3,
+        // 流式请求：reasoning 模型的思考增量（delta.reasoning_content）
+        // 可实时回调 [onThinking]；不支持流式的服务商仍返回完整 JSON，
+        // _chat 内按 Content-Type 分流兼容。
+        'stream': true,
+        if (jsonMode) 'response_format': {'type': 'json_object'},
+        'messages': [
+          {'role': 'system', 'content': system},
+          {'role': 'user', 'content': user},
+        ],
+      };
+
+  /// 服务商不支持 `response_format` 参数时的 400 判定（重发不带该参数）。
+  static bool shouldRetryWithoutJsonMode(int statusCode, String error) =>
+      statusCode == 400 && error.toLowerCase().contains('response_format');
+
+  /// 解析模型输出为字符串数组（v2.2.1 双契约兼容）：
+  /// 优先 `{"lines":[...]}` 对象（json_object 模式契约），回退旧纯数组；
+  /// 尽力兼容被 ```json 包裹 / 混有解释文字的情况；长度不符截断/补齐，
+  /// 缺失项为空串（调用方处理空串回退原文）。
+  static List<String> parseModelOutput(String content, int expected) {
     var text = content.trim();
     final fence = RegExp(r'```(?:json)?\s*([\s\S]*?)```').firstMatch(text);
     if (fence != null) text = fence.group(1)!.trim();
-    final start = text.indexOf('[');
-    final end = text.lastIndexOf(']');
-    if (start >= 0 && end > start) text = text.substring(start, end + 1);
-    final dynamic decoded = jsonDecode(text);
-    if (decoded is List) {
-      final list = decoded.map((e) => '$e').toList();
-      if (list.length == expected) return list;
-      // 长度不符：截断/补齐，缺失项回退原文（调用方处理空串）
-      return List.generate(expected, (i) => i < list.length ? list[i] : '');
+    final candidates = <String>[];
+    final objStart = text.indexOf('{');
+    final objEnd = text.lastIndexOf('}');
+    if (objStart >= 0 && objEnd > objStart) {
+      candidates.add(text.substring(objStart, objEnd + 1));
     }
-    throw const FormatException('模型输出不是 JSON 数组');
+    final arrStart = text.indexOf('[');
+    final arrEnd = text.lastIndexOf(']');
+    if (arrStart >= 0 && arrEnd > arrStart) {
+      candidates.add(text.substring(arrStart, arrEnd + 1));
+    }
+    candidates.add(text);
+    for (final c in candidates) {
+      final dynamic decoded;
+      try {
+        decoded = jsonDecode(c);
+      } catch (_) {
+        continue;
+      }
+      List? list;
+      if (decoded is Map) {
+        final lines = decoded['lines'];
+        if (lines is List) list = lines;
+      } else if (decoded is List) {
+        list = decoded;
+      }
+      if (list == null) continue;
+      final out = [for (final e in list) '$e'];
+      if (out.length == expected) return out;
+      return List.generate(expected, (i) => i < out.length ? out[i] : '');
+    }
+    throw const FormatException('模型输出不是 {"lines":[...]} 对象或 JSON 数组');
+  }
+
+  /// 流式译文转写清洗（v2.2.1 直播面板）：把累积的原始 content 增量
+  /// （模型逐 token 输出的 JSON 文本）尽力还原为人读译文——提取字符串
+  /// 值、丢弃 JSON 键与脚手架、还原转义；尾部未闭合的字符串按已到达
+  /// 部分逐字显示。非 JSON 文本原样返回（兼容不走 JSON 契约的输出）。
+  static String parseLiveTranscript(String raw) {
+    var text = raw.trim();
+    final fence = RegExp(r'```(?:json)?\s*([\s\S]*)').firstMatch(text);
+    if (fence != null) text = (fence.group(1) ?? '').trim();
+    final parts = <String>[];
+    final buf = StringBuffer();
+    var inString = false;
+    var escaped = false;
+    for (var i = 0; i < text.length; i++) {
+      final ch = text[i];
+      if (!inString) {
+        if (ch == '"') {
+          inString = true;
+          escaped = false;
+        }
+        continue;
+      }
+      if (escaped) {
+        escaped = false;
+        switch (ch) {
+          case 'n':
+            buf.write('\n');
+          case 't':
+            buf.write('\t');
+          case 'r':
+            buf.write('\r');
+          case 'u':
+            if (i + 4 < text.length) {
+              final code =
+                  int.tryParse(text.substring(i + 1, i + 5), radix: 16);
+              if (code != null) {
+                buf.writeCharCode(code);
+                i += 4;
+              } else {
+                buf.write(ch);
+              }
+            } else {
+              buf.write(ch);
+            }
+          default:
+            buf.write(ch);
+        }
+        continue;
+      }
+      if (ch == r'\') {
+        escaped = true;
+      } else if (ch == '"') {
+        inString = false;
+        // 向前看：字符串后紧跟 ':' 的是 JSON 键（如 "lines"），丢弃
+        var j = i + 1;
+        while (j < text.length && ' \n\r\t'.contains(text[j])) {
+          j++;
+        }
+        final isKey = j < text.length && text[j] == ':';
+        if (!isKey) parts.add(buf.toString());
+        buf.clear();
+      } else {
+        buf.write(ch);
+      }
+    }
+    if (inString && buf.isNotEmpty) parts.add(buf.toString());
+    return parts.isEmpty ? text : parts.join('\n');
   }
 
   Future<String> _chat(
@@ -786,98 +1167,102 @@ class TranslationService {
     required String system,
     required String user,
     void Function(String reasoningDelta)? onThinking,
+    void Function(String contentDelta)? onContent,
+    void Function(AiUsage usage)? onUsage,
+    Duration? timeout,
   }) async {
+    final effectiveTimeout = timeout ?? _httpTimeout;
     final uri = Uri.parse(config.chatCompletionsUrl);
     HttpClient? client;
     try {
       client = HttpClient()
         ..connectionTimeout = const Duration(seconds: 30)
         ..badCertificateCallback = (_, __, ___) => false;
-      final req = await client
-          .openUrl('POST', uri)
-          .timeout(const Duration(seconds: 30));
-      req.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
-      req.headers.set(HttpHeaders.authorizationHeader, 'Bearer ${config.apiKey}');
-      req.add(utf8.encode(jsonEncode({
-        'model': config.model,
-        'temperature': 0.3,
-        // 流式请求：reasoning 模型的思考增量（delta.reasoning_content）
-        // 可实时回调 [onThinking]；不支持流式的服务商仍返回完整 JSON，
-        // 下方按 Content-Type 分流兼容。
-        'stream': true,
-        'messages': [
-          {'role': 'system', 'content': system},
-          {'role': 'user', 'content': user},
-        ],
-      })));
-      final res = await req.close().timeout(_httpTimeout);
-      final contentType = res.headers.value(HttpHeaders.contentTypeHeader) ?? '';
-      if (contentType.contains('text/event-stream')) {
-        return await _readSse(res, onThinking: onThinking);
-      }
-      // 非 SSE（服务商忽略 stream 参数）：整包 JSON，兼容读取
-      // message.reasoning_content（DeepSeek R1 系非流式也返回该字段）。
-      // 读 body 同样要超时：连接半开/服务端停滞时 join() 会永久挂起，
-      // 卡死串行队列且取消（批间检查）无法生效
-      final body = await res
-          .transform(utf8.decoder)
-          .join()
-          .timeout(_httpTimeout);
-      if (res.statusCode != 200) {
-        throw HttpException('HTTP ${res.statusCode}: ${_brief(body)}');
-      }
-      final decoded = jsonDecode(body);
-      final choices = (decoded as Map)['choices'];
-      if (choices is List && choices.isNotEmpty) {
-        final msg = (choices.first as Map)['message'];
-        final content = msg is Map ? msg['content'] : null;
-        final reasoning = msg is Map ? msg['reasoning_content'] : null;
-        if (reasoning is String && reasoning.isNotEmpty) {
-          onThinking?.call(reasoning);
+      var jsonMode = true;
+      while (true) {
+        final req = await client
+            .openUrl('POST', uri)
+            .timeout(const Duration(seconds: 30));
+        req.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
+        req.headers.set(HttpHeaders.authorizationHeader, 'Bearer ${config.apiKey}');
+        req.add(utf8.encode(jsonEncode(chatRequestBody(
+          model: config.model,
+          system: system,
+          user: user,
+          jsonMode: jsonMode,
+        ))));
+        final res = await req.close().timeout(effectiveTimeout);
+        final contentType =
+            res.headers.value(HttpHeaders.contentTypeHeader) ?? '';
+        if (contentType.contains('text/event-stream')) {
+          return await _readSse(res,
+              onThinking: onThinking, onContent: onContent,
+              onUsage: onUsage, timeout: effectiveTimeout);
         }
-        if (content is String && content.trim().isNotEmpty) return content;
+        // 非 SSE（服务商忽略 stream 参数）：整包 JSON，兼容读取
+        // message.reasoning_content（DeepSeek R1 系非流式也返回该字段）。
+        // 读 body 同样要超时：连接半开/服务端停滞时 join() 会永久挂起，
+        // 卡死串行队列且取消（批间检查）无法生效
+        final body = await res
+            .transform(utf8.decoder)
+            .join()
+            .timeout(effectiveTimeout);
+        if (res.statusCode != 200) {
+          // 部分中转/兼容端点不支持 response_format：去掉该参数重发一次
+          if (jsonMode && shouldRetryWithoutJsonMode(res.statusCode, body)) {
+            jsonMode = false;
+            continue;
+          }
+          throw HttpException('HTTP ${res.statusCode}: ${_brief(body)}');
+        }
+        final bodyUsage = parseSseUsage(body);
+        if (bodyUsage != null) onUsage?.call(bodyUsage);
+        final decoded = jsonDecode(body);
+        final choices = (decoded as Map)['choices'];
+        if (choices is List && choices.isNotEmpty) {
+          final msg = (choices.first as Map)['message'];
+          final content = msg is Map ? msg['content'] : null;
+          final reasoning = msg is Map ? msg['reasoning_content'] : null;
+          if (reasoning is String && reasoning.isNotEmpty) {
+            onThinking?.call(reasoning);
+          }
+          if (content is String && content.trim().isNotEmpty) return content;
+        }
+        throw const FormatException('响应中无译文内容');
       }
-      throw const FormatException('响应中无译文内容');
     } finally {
       client?.close();
     }
   }
 
-  /// 读取 SSE 流式响应：逐行解析 `data:` 载荷，累积 content 返回；
-  /// reasoning 增量实时回调 [onThinking]。行级超时防服务端停滞挂起。
+  /// 读取 SSE 流式响应：逐行喂入 [SseStreamParser]，累积 content 返回；
+  /// reasoning / content（v2.2.1 流式译文）增量与尾包 usage 实时回调。
+  /// 行级超时防服务端停滞挂起。
   Future<String> _readSse(
     HttpClientResponse res, {
     void Function(String reasoningDelta)? onThinking,
+    void Function(String contentDelta)? onContent,
+    void Function(AiUsage usage)? onUsage,
+    Duration? timeout,
   }) async {
     final content = StringBuffer();
-    final dataBuf = <String>[];
-
-    void handlePayload(String payload) {
-      final delta = parseSseDelta(payload);
-      if (delta == null) return;
-      if (delta.reasoning.isNotEmpty) onThinking?.call(delta.reasoning);
-      if (delta.content.isNotEmpty) content.write(delta.content);
-    }
+    final parser = SseStreamParser(
+      onThinking: onThinking,
+      onUsage: onUsage,
+      onContent: (delta) {
+        content.write(delta);
+        onContent?.call(delta);
+      },
+    );
 
     final lines = res
         .transform(utf8.decoder)
         .transform(const LineSplitter())
-        .timeout(_httpTimeout);
+        .timeout(timeout ?? _httpTimeout);
     await for (final line in lines) {
-      if (line.isEmpty) {
-        // 空行 = SSE 事件边界；多行 data: 拼接为一个载荷
-        if (dataBuf.isNotEmpty) {
-          handlePayload(dataBuf.join('\n'));
-          dataBuf.clear();
-        }
-        continue;
-      }
-      if (line.startsWith('data:')) {
-        dataBuf.add(line.substring(5).trimLeft());
-      }
-      // 其余 SSE 字段（event:/id:/注释行）忽略
+      parser.feed(line);
     }
-    if (dataBuf.isNotEmpty) handlePayload(dataBuf.join('\n'));
+    parser.close();
     final text = content.toString();
     if (text.trim().isEmpty) {
       throw const FormatException('流式响应中无译文内容');
@@ -939,4 +1324,15 @@ class TranslationCancelledException implements Exception {
   const TranslationCancelledException();
   @override
   String toString() => '翻译已取消';
+}
+
+/// 批次重试耗尽（继承 StateError 保持既有错误语义/文案）。
+/// [parseFailure] = 根因是模型输出解析失败（FormatException），
+/// 是失败批次拆分重试（30→15→8）的触发条件。
+class TranslationBatchException extends StateError {
+  final Object cause;
+  final bool parseFailure;
+
+  TranslationBatchException(String tag, this.cause, this.parseFailure)
+      : super('AI $tag失败：$cause');
 }

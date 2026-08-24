@@ -199,7 +199,8 @@ void main() {
       expect(p, contains(r'{\i1}'));
       expect(p.toLowerCase(), contains('backslash-n'));
       expect(p, contains('same length'));
-      expect(p, contains('ONLY a JSON array'));
+      expect(p, contains('ONLY a JSON object'),
+          reason: 'v2.2.1 契约改为 {"lines":[...]}（json_object 模式）');
       expect(p, contains(zh.prompt), reason: '润色目标语言与翻译一致');
     });
 
